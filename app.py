@@ -8,6 +8,8 @@ Exposes the FleetCommanderPipeline to the world:
 * ``GET  /api/satellite_state/{sat_id}``        — GEAP memory-bank state.
 * ``GET  /api/conjunction_history/{sat_id}``    — screening history.
 * ``GET  /api/armor_report/{trace_id}``         — replay a mission's audit trail.
+* ``GET  /api/orbital_state``   — live SGP4 positions of every tracked object.
+* ``GET  /api/live_feed``       — Server-Sent-Events stream of audit events.
 
 Security: every ``/api/*`` route requires an ``X-API-Key`` header matching
 the ``ORBIT_API_KEY`` environment variable (constant-time comparison).
@@ -21,16 +23,18 @@ Run locally from the repository root:
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import os
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Literal, Optional
+from typing import Any, AsyncIterator, Final, Literal, Optional
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from google.adk.agents import LlmAgent
@@ -52,6 +56,7 @@ from geap_sim.agent_registry import get_shared_registry
 from geap_sim.memory_bank import get_shared_memory_bank
 from geap_sim.model_armor import STATUS_APPROVED
 from geap_sim.observability import audit_logger
+from tools.space_tools import get_orbital_snapshot
 
 # ---------------------------------------------------------------------------
 # Configuration & shared singletons
@@ -107,6 +112,20 @@ app = FastAPI(
     ),
     version=FLEET_VERSION,
     lifespan=lifespan,
+)
+
+# CORS for separately-hosted command-center frontends (Firebase/Vercel).
+# Comma-separated allowlist via ORBIT_CORS_ORIGINS; default "*" because the
+# API-key gate still protects every /api/* route.
+_CORS_ORIGINS: Final[list[str]] = [
+    origin.strip() for origin in os.getenv("ORBIT_CORS_ORIGINS", "*").split(",") if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_CORS_ORIGINS,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["X-API-KEY", "Content-Type", "X-ORBIT-TRACE-ID"],
+    expose_headers=["X-ORBIT-SERVICE"],
 )
 
 
@@ -319,3 +338,49 @@ async def armor_report(trace_id: str) -> dict[str, Any]:
         "event_count": len(events),
         "events": events,
     }
+
+
+@app.get("/api/orbital_state")
+async def orbital_state() -> dict[str, Any]:
+    """Live positions of every tracked object plus active conjunction lines.
+
+    SGP4-propagates the catalogue to the current instant (TEME → WGS84) and
+    returns the memoised non-LOW conjunction screens. Off the event loop so a
+    burst of dashboard polls never starves mission traffic.
+    """
+    return await asyncio.to_thread(get_orbital_snapshot)
+
+
+@app.get("/api/live_feed")
+async def live_feed(request: Request, replay: int = Query(default=40, ge=0, le=500)) -> StreamingResponse:
+    """Server-Sent-Events stream of audit records as they are committed.
+
+    Source of truth is the AuditLogger ring buffer itself — the same records
+    Cloud Logging captures. Each client keeps a ``seq`` cursor; new events
+    are pushed within ~400 ms and ``: heartbeat`` comments keep proxies from
+    idling the connection out. ``replay`` backfills the most recent events on
+    connect so a freshly opened dashboard is never blank.
+    """
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+        "Connection": "keep-alive",
+    }
+
+    async def event_stream() -> AsyncIterator[str]:
+        last_seq = max(audit_logger.latest_seq() - replay, 0)
+        next_heartbeat = time.monotonic() + 15.0
+        yield ": orbit live feed connected\n\n"
+        while True:
+            if await request.is_disconnected():
+                break
+            batch = audit_logger.get_events_since(last_seq)
+            for record in batch:
+                last_seq = int(record.get("seq", last_seq))
+                yield f"id: {last_seq}\nevent: audit\ndata: {json.dumps(record, default=str)}\n\n"
+            if not batch and time.monotonic() >= next_heartbeat:
+                yield ": heartbeat\n\n"
+                next_heartbeat = time.monotonic() + 15.0
+            await asyncio.sleep(0.4)
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)

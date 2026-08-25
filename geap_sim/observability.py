@@ -69,6 +69,7 @@ class AuditLogger:
         self._stream: TextIO = stream if stream is not None else sys.stdout
         self._lock = threading.Lock()
         self._events: collections.deque[dict[str, Any]] = collections.deque(maxlen=self._BUFFER_MAXLEN)
+        self._seq: int = 0
 
     def log_event(
         self,
@@ -101,9 +102,27 @@ class AuditLogger:
         }
         line = json.dumps(record, separators=(",", ":"), default=str)
         with self._lock:
+            self._seq += 1
+            record["seq"] = self._seq
             print(line, file=self._stream, flush=True)
             self._events.append(record)
         return record
+
+    def latest_seq(self) -> int:
+        """Highest sequence number handed out so far (0 before any event)."""
+        with self._lock:
+            return self._seq
+
+    def get_events_since(self, seq: int) -> list[dict[str, Any]]:
+        """Buffered records with sequence numbers strictly above ``seq``.
+
+        The cursor contract powering the Server-Sent-Events live feed: a
+        client remembers the last ``seq`` it saw and polls this for new
+        records. Oldest first; each returned copy is independent.
+        """
+        wanted = int(seq)
+        with self._lock:
+            return [dict(record) for record in self._events if int(record.get("seq", 0)) > wanted]
 
     def get_events_by_trace(self, trace_id: str) -> list[dict[str, Any]]:
         """Replay buffered audit records for one mission trace (oldest first)."""

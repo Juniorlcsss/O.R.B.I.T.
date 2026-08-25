@@ -33,6 +33,11 @@ import numpy as np
 from google.adk.tools import FunctionTool
 from sgp4.api import Satrec, SatrecArray, jday
 
+try:  # gstime lives in different homes across sgp4 builds/versions
+    from sgp4.api import gstime
+except ImportError:  # pragma: no cover — pure-Python sgp4 installs
+    from sgp4.propagation import gstime
+
 # ---------------------------------------------------------------------------
 # Physical constants & fleet policy limits
 # ---------------------------------------------------------------------------
@@ -755,6 +760,128 @@ def negotiate_dodge_maneuver(target_fleet: str, required_delta_v: float) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Live orbital snapshot (consumed by the /api/orbital_state visualisation API)
+# ---------------------------------------------------------------------------
+
+_WGS84_FLATTENING: Final[float] = 1.0 / 298.257223563
+_SATELLITE_COLOR_HEX: Final[str] = "#38bdf8"
+_DEBRIS_COLOR_HEX: Final[str] = "#ef4444"
+#: Conjunction lines are only drawn for MEDIUM/HIGH encounters; LOW pairs
+#: would add dozens of near-invisible lines across the globe.
+_SNAPSHOT_MIN_RISK_BAND: Final[str] = "MEDIUM"
+
+
+def _teme_to_geodetic(position_teme_km: np.ndarray, gmst_rad: float) -> tuple[float, float, float]:
+    """TEME position (km) → (geodetic_lat_deg, lon_deg, altitude_km).
+
+    TEME is Earth-centred inertial; rotating the right-ascension by GMST
+    yields an Earth-fixed vector, which is then converted to WGS84 geodetic
+    coordinates with a closed-form first guess plus three Bowring iterations
+    (converges to sub-millimetre at LEO altitudes).
+    """
+    x, y, z = float(position_teme_km[0]), float(position_teme_km[1]), float(position_teme_km[2])
+    lon = math.atan2(y, x) - gmst_rad
+    lon = (lon + math.pi) % (2.0 * math.pi) - math.pi
+
+    r_xy = math.hypot(x, y)
+    e2 = _WGS84_FLATTENING * (2.0 - _WGS84_FLATTENING)
+    lat = math.atan2(z, r_xy * (1.0 - e2))
+    n_radius = EARTH_MEAN_RADIUS_KM
+    for _ in range(3):
+        sin_lat = math.sin(lat)
+        n_radius = EARTH_MEAN_RADIUS_KM / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+        lat = math.atan2(z + n_radius * e2 * sin_lat, r_xy)
+    sin_lat = math.sin(lat)
+    n_radius = EARTH_MEAN_RADIUS_KM / math.sqrt(1.0 - e2 * sin_lat * sin_lat)
+    altitude = r_xy / math.cos(lat) - n_radius if abs(math.cos(lat)) > 1e-9 else abs(z) - n_radius * (1.0 - e2)
+    return math.degrees(lat), math.degrees(lon), max(altitude, 0.0)
+
+
+def propagate_all_objects() -> list[dict[str, Any]]:
+    """Propagate every catalogued object to the current UTC instant.
+
+    Returns one record per object: identity, satellite/debris kind, WGS84
+    geodetic position and inertial speed — exactly what a 3D front end needs
+    to place points on the globe.
+    """
+    jd, fr = _julian_parts(datetime.now(timezone.utc))
+    gmst = gstime(jd + fr)
+    objects: list[dict[str, Any]] = []
+    for key, entry in _CATALOG.items():
+        satrec = Satrec.twoline2rv(_build_line1(entry), _build_line2(entry))
+        error, r_teme, v_teme = satrec.sgp4(jd, fr)
+        if error != 0:
+            continue
+        lat, lon, alt = _teme_to_geodetic(r_teme, gmst)
+        objects.append(
+            {
+                "id": key,
+                "name": entry.name,
+                "type": "satellite" if entry.kind == "payload" else "debris",
+                "norad_id": entry.norad_id,
+                "operator": entry.operator,
+                "lat": round(lat, 4),
+                "lon": round(lon, 4),
+                "alt_km": round(alt, 2),
+                "velocity_km_s": round(float(np.linalg.norm(v_teme)), 4),
+                "inclination_deg": round(float(satrec.inclo) * 180.0 / math.pi, 3),
+                "color": _SATELLITE_COLOR_HEX if entry.kind == "payload" else _DEBRIS_COLOR_HEX,
+            }
+        )
+    return objects
+
+
+def _screen_pair_cached(sat_key: str, debris_key: str) -> dict[str, Any] | None:
+    """Screen one payload×debris pair; memoised forever because the synthetic
+    catalogue's elements never change, so every replay is byte-identical."""
+    result = screen_conjunction(sat_key, debris_key)
+    if result.get("status") != "ok":
+        return None
+    return {
+        "sat_id": result["sat_id"],
+        "debris_id": result["debris_id"],
+        "tca_utc": result["tca_utc"],
+        "miss_distance_km": result["miss_distance_km"],
+        "probability_of_collision": result["probability_of_collision"],
+        "risk_band": result["risk_level"],
+    }
+
+
+_PAIR_SCREEN_CACHE: Final[dict[tuple[str, str], dict[str, Any] | None]] = {}
+
+
+def active_conjunctions() -> list[dict[str, Any]]:
+    """All currently-screened non-LOW conjunctions in the catalogue.
+
+    Payloads are protected assets; debris objects are the secondaries. The
+    cache makes repeated polls from a live dashboard free after the first.
+    """
+    payloads = [key for key, e in _CATALOG.items() if e.kind == "payload"]
+    debris = [key for key, e in _CATALOG.items() if e.kind == "debris"]
+    active: list[dict[str, Any]] = []
+    for sat_key in sorted(payloads):
+        for debris_key in sorted(debris):
+            pair = (sat_key, debris_key)
+            if pair not in _PAIR_SCREEN_CACHE:
+                _PAIR_SCREEN_CACHE[pair] = _screen_pair_cached(*pair)
+            screened = _PAIR_SCREEN_CACHE[pair]
+            if screened and screened["risk_band"] in ("HIGH", _SNAPSHOT_MIN_RISK_BAND):
+                active.append(screened)
+    return active
+
+
+def get_orbital_snapshot() -> dict[str, Any]:
+    """One consistent frame of the tracked-space picture for the command UI."""
+    now = datetime.now(timezone.utc)
+    return {
+        "generated_utc": _iso_z(now),
+        "objects": propagate_all_objects(),
+        "conjunctions": active_conjunctions(),
+        "simulated": True,
+    }
+
+
+# ---------------------------------------------------------------------------
 # ADK registration — toolkits are consumed strictly per-agent role
 # ---------------------------------------------------------------------------
 
@@ -779,6 +906,7 @@ __all__ = [
     "ASTRO_TOOLKIT",
     "DIPLOMAT_TOOLKIT",
     "MAX_NEGOTIABLE_DELTA_V_MPS",
+    "get_orbital_snapshot",
     "get_tle_data_tool",
     "negotiate_dodge_maneuver_tool",
     "screen_conjunction_tool",

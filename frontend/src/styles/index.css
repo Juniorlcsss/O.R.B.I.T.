@@ -1,0 +1,245 @@
+/* Self-hosted so the console renders identically offline and in the demo cut. */
+@import "@fontsource/ibm-plex-sans/latin-400.css";
+@import "@fontsource/ibm-plex-sans/latin-500.css";
+@import "@fontsource/ibm-plex-sans/latin-600.css";
+@import "@fontsource/ibm-plex-mono/latin-400.css";
+@import "@fontsource/ibm-plex-mono/latin-500.css";
+/* Designed by the Braille Institute for low-vision readers; offered as an
+   alternative interface face in the accessibility panel. */
+@import "@fontsource/atkinson-hyperlegible/latin-400.css";
+@import "@fontsource/atkinson-hyperlegible/latin-700.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Token layer. The accessibility panel rewrites the status/accent triplets and
+ * the data-* attributes on <html>; everything below reacts to that. Values are
+ * bare `R G B` triplets so Tailwind's `rgb(var(--x) / <alpha>)` colours keep
+ * their opacity modifiers.
+ */
+:root {
+  --c-ink-900: 6 8 11;
+  --c-ink-800: 10 13 18;
+  --c-ink-700: 14 18 24;
+  --c-ink-600: 20 25 34;
+  --c-ink-500: 28 34 45;
+
+  --c-fg: 228 232 239;
+  --c-fg-2: 152 162 179;
+  /* 4.8:1 on the panel surface. The previous value looked right but only
+     reached 3.56:1, failing WCAG AA for the 10px labels it is used on. */
+  --c-fg-3: 118 127 141;
+
+  /* Overwritten at runtime by applySettings(); these are the default palette
+     so the very first paint is correct before React mounts. */
+  --c-accent: 122 162 247;
+  --c-nominal: 87 196 137;
+  --c-caution: 214 164 69;
+  --c-alert: 227 103 92;
+
+  --hair: rgba(255, 255, 255, 0.07);
+  --hairlit: rgba(255, 255, 255, 0.15);
+
+  --font-sans: "IBM Plex Sans";
+  --font-mono: "IBM Plex Mono";
+
+  --ui-scale: 1;
+}
+
+/* Raises the neutral ramp only; hue stays wherever the CVD preset put it, so
+   the two settings compose instead of fighting. */
+:root[data-contrast="high"] {
+  --c-ink-900: 0 0 0;
+  --c-ink-800: 4 6 9;
+  --c-ink-700: 12 16 22;
+  --c-ink-600: 24 30 40;
+  --c-ink-500: 44 52 66;
+
+  --c-fg: 255 255 255;
+  --c-fg-2: 200 209 221;
+  --c-fg-3: 156 167 182;
+
+  --hair: rgba(255, 255, 255, 0.24);
+  --hairlit: rgba(255, 255, 255, 0.42);
+}
+
+:root[data-typeface="hyperlegible"] {
+  --font-sans: "Atkinson Hyperlegible";
+}
+
+@layer base {
+  html {
+    /* Interface scale. Tailwind spacing is rem-based, so this moves type,
+       padding and gaps together rather than just the font. */
+    font-size: calc(100% * var(--ui-scale));
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+
+  body {
+    @apply bg-ink-900 text-fg font-sans text-base antialiased;
+    /* Telemetry is read as columns of digits, so never let them jitter. */
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1, "cv05" 1;
+  }
+
+  /* One focus treatment for the whole console, thickened in high contrast. */
+  :focus-visible {
+    outline: 2px solid theme("colors.accent.DEFAULT");
+    outline-offset: 1px;
+  }
+
+  ::selection {
+    background: theme("colors.accent.soft");
+  }
+}
+
+@layer components {
+  /* Section eyebrow — the only place uppercase tracking is allowed. */
+  .eyebrow {
+    @apply text-2xs font-semibold uppercase text-fg-3;
+  }
+
+  .field {
+    @apply w-full rounded border border-hair bg-ink-900 px-2.5 py-2 font-mono text-sm text-fg
+           transition-colors duration-150 ease-console
+           hover:border-hairlit focus:border-accent focus:outline-none;
+  }
+
+  /* Primary action: the brightest surface in the UI, used exactly once. */
+  .btn-primary {
+    @apply rounded bg-fg px-3.5 py-2 text-sm font-semibold text-ink-900
+           transition-colors duration-150 ease-console
+           hover:bg-white disabled:cursor-not-allowed disabled:bg-ink-500 disabled:text-fg-3;
+  }
+
+  .btn-quiet {
+    @apply rounded border border-hair px-2.5 py-1.5 text-sm text-fg-2
+           transition-colors duration-150 ease-console
+           hover:border-hairlit hover:text-fg;
+  }
+
+  /* Visible only to assistive technology. */
+  .sr-only-live {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  /* Jump past the panels straight to the globe controls. */
+  .skip-link {
+    @apply sr-only-live;
+  }
+  .skip-link:focus {
+    @apply not-sr-only fixed left-3 top-3 z-[60] rounded bg-fg px-3 py-2 text-sm font-semibold text-ink-900;
+    clip: auto;
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+  }
+}
+
+/* Scrollbars: present when needed, invisible otherwise. */
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hairlit);
+  border: 3px solid transparent;
+  background-clip: content-box;
+  border-radius: 9px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+  background-clip: content-box;
+}
+
+/* Cesium chrome we replace with our own. */
+.cesium-widget-credits,
+.cesium-viewer-bottom {
+  display: none !important;
+}
+.cesium-widget canvas {
+  outline: none;
+  display: block;
+}
+.cesium-viewer,
+.cesium-widget {
+  background: rgb(var(--c-ink-900));
+}
+
+@keyframes orbit-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+.animate-blink {
+  animation: orbit-blink 1.1s ease-in-out infinite;
+}
+
+@keyframes feed-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-feed-in {
+  animation: feed-in 0.22s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(400%);
+  }
+}
+/* Indeterminate progress for an in-flight mission. */
+.animate-sweep {
+  animation: sweep 1.4s cubic-bezier(0.5, 0, 0.5, 1) infinite;
+}
+
+/*
+ * Motion kill-switch. Driven by the explicit setting rather than the media
+ * query alone, because the setting is itself seeded from the media query — an
+ * operator can opt back into motion even if the OS asks to reduce it, and vice
+ * versa. Blinking is the important one: content flashing between 2 and 55 Hz
+ * is a seizure risk (WCAG 2.3.1).
+ */
+:root[data-motion="reduced"] .animate-blink,
+:root[data-motion="reduced"] .animate-feed-in,
+:root[data-motion="reduced"] .animate-sweep,
+:root[data-motion="reduced"] .animate-ping,
+:root[data-motion="reduced"] .animate-pulse {
+  animation: none !important;
+}
+:root[data-motion="reduced"] * {
+  transition-duration: 1ms !important;
+}

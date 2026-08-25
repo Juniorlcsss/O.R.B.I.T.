@@ -1,0 +1,20 @@
+# =============================================================================
+# Project O.R.B.I.T. — Command Center frontend (build from repo root):
+#   docker build -f Dockerfile.frontend -t orbit-web .
+#   docker run -p 8081:8080 -e BACKEND_URL=https://<orbit-backend>.run.app orbit-web
+# =============================================================================
+
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY frontend/package.json frontend/package-lock.json* ./
+RUN npm install --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run build
+
+FROM nginx:alpine
+RUN apk add --no-cache gettext
+COPY --from=build /app/dist /usr/share/nginx/html
+COPY frontend/nginx/default.conf.template /etc/nginx/templates/default.conf.template
+ENV BACKEND_URL=http://host.docker.internal:8080
+EXPOSE 8080
+CMD ["nginx", "-g", "daemon off;"]
