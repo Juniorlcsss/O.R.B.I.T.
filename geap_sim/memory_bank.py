@@ -189,6 +189,29 @@ class MemoryBank:
         matches.sort(key=lambda doc: str(doc.get("recorded_utc", "")), reverse=True)
         return matches[:limit]
 
+    async def get_conjunction_event(self, conjunction_id: str) -> dict[str, Any] | None:
+        """Fetch one conjunction record by ID; ``None`` when unknown."""
+        key = safe_document_id(conjunction_id)
+        if self._backend == "firestore":
+            snapshot = await self._client.collection(CONJUNCTIONS_COLLECTION).document(key).get()
+            stored = snapshot.to_dict()
+            return dict(stored) if stored else None
+        return self._memory_store.get((CONJUNCTIONS_COLLECTION, key))
+
+    async def append_conjunction_fields(self, conjunction_id: str, fields: dict[str, Any]) -> dict[str, Any] | None:
+        """Merge ``fields`` into an existing conjunction document.
+
+        Used by background writers (e.g. the Veo debrief task) that attach
+        artifacts to a record the pipeline already persisted. Returns the
+        merged document, or ``None`` when the conjunction does not exist.
+        """
+        current = await self.get_conjunction_event(conjunction_id)
+        if current is None:
+            return None
+        merged = {**current, **fields}
+        await self._write(CONJUNCTIONS_COLLECTION, safe_document_id(conjunction_id), merged)
+        return merged
+
     # -- internals -------------------------------------------------------------
 
     async def _write(self, collection: str, doc_key: str, data: dict[str, Any]) -> None:
@@ -214,7 +237,9 @@ __all__ = [
     "FUEL_PERCENT_PER_DV_MPS",
     "MemoryBank",
     "SATELLITES_COLLECTION",
+    "append_conjunction_fields",
     "estimate_fuel_after_burn",
+    "get_conjunction_event",
     "get_shared_memory_bank",
     "safe_document_id",
 ]

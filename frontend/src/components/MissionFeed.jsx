@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { beep } from "../lib/api.js";
+import { beep, playEventAudio } from "../lib/api.js";
 import { age, humanise, monogram, TONE, toneOf } from "../lib/format.js";
 import { IconActivity } from "./icons.jsx";
 import StatusMark from "./StatusMark.jsx";
@@ -59,6 +59,25 @@ function collapseRuns(records) {
   return rows;
 }
 
+/**
+ * Map an audit record onto its mission-control audio cue (served by the
+ * Lyria-backed /api/audio endpoint). Order matters: edge-autonomy events
+ * win over generic dispatch cues, and MISSION_STATUS is resolved by status.
+ */
+function audioCueFor(record) {
+  const type = String(record.event_type || "");
+  const status = String(record.status || "");
+  if (/^EDGE_(AUTONOMY_ENGAGED|DECISION_FINAL|EMERGENCY_DODGE)/.test(type)) return "EDGE_AUTONOMOUS";
+  if (type === "MISSION_STATUS") {
+    if (/EXECUTION_AUTHORIZED|DODGE_EXECUTED/.test(status)) return "MANEUVER_AUTHORIZED";
+    if (/BLOCKED|REJECTED/.test(status)) return "MANEUVER_BLOCKED";
+    if (/HUMAN_DISPATCH|STANDOFF/.test(status)) return "HUMAN_DISPATCH";
+  }
+  if (/CIRCUIT_BREAKER_TRIPPED|HUMAN_DISPATCH/.test(type)) return "HUMAN_DISPATCH";
+  if (/HIGH/.test(`${record.payload?.risk_band ?? ""} ${status} ${type}`.toUpperCase())) return "ALERT_DETECTED";
+  return null;
+}
+
 export default function MissionFeed({ events, connected }) {
   const { settings } = useSettings();
   const [nowMs, setNowMs] = useState(Date.now());
@@ -71,14 +90,18 @@ export default function MissionFeed({ events, connected }) {
     return () => clearInterval(timer);
   }, []);
 
-  // Audible cue on the events an operator must not miss. Opt-out, because an
+  // Audible cue on the events an operator must not miss, each class with
+  // its own generated identity (Lyria-backed). Opt-out, because an
   // unexpected tone is hostile in a shared room and useless with the volume
   // muted; the colour, shape and text encodings all stand on their own.
   useEffect(() => {
     if (!settings.audio || !events.length) return;
-    const latest = events[events.length - 1];
-    const text = `${latest.status} ${latest.event_type} ${latest.payload?.risk_band ?? ""}`.toUpperCase();
-    if (/HIGH|TRIPPED|REJECT|BLOCK|CRITICAL/.test(text)) beep(text.includes("HIGH") ? 660 : 330);
+    const cue = audioCueFor(events[events.length - 1]);
+    if (!cue) return;
+    playEventAudio(cue).then((played) => {
+      if (!played) beep(cue === "MANEUVER_BLOCKED" ? 330 : 660);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events.length, settings.audio]);
 
   const noiseCount = useMemo(() => events.filter(isPollNoise).length, [events]);

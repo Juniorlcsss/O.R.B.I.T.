@@ -30,9 +30,21 @@ to ``HUMAN_DISPATCH_DEGRADED`` with a structured operator payload instead of
 guessing. Consecutive-failure counters persist in session state so the
 degradation survives cross-session inspection via the memory bank.
 
+Edge autonomy (Phase 7)
+-----------------------
+One exception to "always degrade to human": on a HIGH-risk conjunction,
+if the negotiation or armour breaker trips — ground cannot finish the
+response, the flight analogue of losing downlink — the mission hands over
+to ``agents.edge_agent.gemma_edge_autopilot``, a satellite-side Gemma
+agent holding exactly one tool (``emergency_dodge``). It decides inside
+a 30-second window under stricter physics than Model Armor applies
+(Pc > 1e-3, dv ceiling, fuel reserve) and every outcome is audited with
+the ``EDGE_AUTONOMOUS`` tag. Disable with ``ORBIT_ENABLE_EDGE_AUTONOMY=0``.
+
 The FleetCommander never calls tools directly and never authorises anything
 itself — execution authority flows exclusively through the SafetyOfficer's
-verdict.
+verdict, or through the onboard autopilot's enforced ROM rule when Earth
+is out of reach.
 """
 
 from __future__ import annotations
@@ -59,7 +71,17 @@ from geap_sim.observability import audit_logger
 
 from .astro import astrodynamics_agent
 from .diplomat import diplomat_agent
-from .safety import safety_officer_agent
+from .edge_agent import (
+    EDGE_DECISION_WINDOW_SECONDS,
+    EDGE_FUEL_RESERVE_PERCENT,
+    EDGE_PC_THRESHOLD,
+    OUTPUT_KEY as EDGE_OUTPUT_KEY,
+    deterministic_edge_decision,
+    gemma_edge_agent,
+    validate_edge_decision,
+)
+from .safety import MAX_ALLOWED_DELTA_V_MPS, safety_officer_agent
+from tools.debrief_generator import generate_and_store_debrief
 
 # ---------------------------------------------------------------------------
 # Identity & configuration
@@ -97,6 +119,10 @@ STATUS_HELD_FOR_HUMAN: Final[str] = "HELD_FOR_HUMAN_REVIEW"
 STATUS_LOGGED_NO_ACTION: Final[str] = "LOGGED_NO_ACTION_REQUIRED"
 STATUS_HUMAN_DISPATCH: Final[str] = "HUMAN_DISPATCH_DEGRADED"
 STATUS_STANDOFF_DISPATCH: Final[str] = "HIGH_RISK_STANDOFF_HUMAN_DISPATCH"
+
+# Edge-autonomy terminal statuses (Gemma onboard autopilot, loss-of-signal).
+STATUS_EDGE_AUTONOMOUS_DODGE: Final[str] = "EDGE_AUTONOMOUS_DODGE_EXECUTED"
+STATUS_EDGE_HELD: Final[str] = "EDGE_AUTONOMY_HOLD_HUMAN_DISPATCH"
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +309,8 @@ class FleetCommanderPipeline(BaseAgent):
     astrodynamics_specialist: LlmAgent
     negotiation_officer: LlmAgent
     model_armor_checkpoint: LlmAgent
+    #: Satellite-side Gemma autopilot (loss-of-signal fallback only).
+    edge_autopilot: LlmAgent
 
     #: GEAP MemoryBank — persistent satellite state & conjunction history.
     mission_memory: MemoryBank | None = None
@@ -293,7 +321,7 @@ class FleetCommanderPipeline(BaseAgent):
 
     @property
     def specialists(self) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
-        """The three specialist agents routed to by this commander."""
+        """The three ground-side specialist agents routed to by this commander."""
         return (
             self.astrodynamics_specialist,
             self.negotiation_officer,
@@ -308,6 +336,7 @@ class FleetCommanderPipeline(BaseAgent):
             self.astrodynamics_specialist.name,
             self.negotiation_officer.name,
             self.model_armor_checkpoint.name,
+            self.edge_autopilot.name,
         )
 
     def mission_memory_for_execution(self) -> MemoryBank:
@@ -442,6 +471,229 @@ class FleetCommanderPipeline(BaseAgent):
             status="TRIPPED",
         )
 
+    # -- edge autonomy (loss-of-signal fallback) ------------------------------
+
+    @staticmethod
+    def _edge_autonomy_enabled() -> bool:
+        """Edge fallback is on by default; operators can kill it from orbit."""
+        return os.environ.get("ORBIT_ENABLE_EDGE_AUTONOMY", "true").strip().lower() not in (
+            "0",
+            "false",
+            "no",
+            "off",
+        )
+
+    async def _edge_autonomy(
+        self,
+        ctx: InvocationContext,
+        *,
+        dossier: dict[str, Any],
+        screening: dict[str, Any],
+        trigger: str,
+    ) -> AsyncGenerator[Event, None]:
+        """Hand the mission to the onboard Gemma autopilot (EDGE_AUTONOMOUS).
+
+        Engaged only when the ground pipeline cannot finish a HIGH-risk
+        response — negotiation or armour breakers tripped — which is the
+        flight analogue of losing downlink mid-mission. The LLM gets one
+        shot inside the decision window; if inference is unavailable the
+        deterministic ROM rule decides so the spacecraft is never left
+        waiting for a model. Every outcome re-checks Pc threshold, dv
+        ceiling and fuel reserve in code before anything executes.
+        """
+        trace_id = str(ctx.session.state.get(STATE_TRACE_ID, ""))
+        sat_id = str(dossier["sat_id"])
+        debris_id = str(dossier["debris_id"])
+        pc = float(screening.get("pc") or 0.0)
+        recommended_dv = max(0.0, float(screening.get("recommended_dv_mps") or 0.0))
+
+        audit_logger.log_event(
+            trace_id=trace_id,
+            agent_name=self.edge_autopilot.name,
+            event_type="EDGE_AUTONOMY_ENGAGED",
+            payload={
+                "tag": "EDGE_AUTONOMOUS",
+                "trigger": trigger,
+                "pc": pc,
+                "pc_threshold": EDGE_PC_THRESHOLD,
+                "decision_window_seconds": EDGE_DECISION_WINDOW_SECONDS,
+                "model": getattr(self.edge_autopilot, "model", None),
+            },
+            status="EDGE_AUTONOMOUS_ENGAGED",
+        )
+        yield self._status_event("GROUND CONTACT LOST. Onboard Gemma autopilot engaged — 30-second window open.")
+
+        scenario = {
+            "sat_id": sat_id,
+            "debris_id": debris_id,
+            "pc": pc,
+            "miss_distance_km": screening.get("miss_distance_km"),
+            "tca_iso": screening.get("tca_iso"),
+            "recommended_dv_mps": recommended_dv,
+            "fuel_percentage_remaining": dossier.get("our_fuel_percent_remaining"),
+            "ground_contact": "LOST",
+            "decision_window_seconds": EDGE_DECISION_WINDOW_SECONDS,
+            "trigger": trigger,
+        }
+
+        verdict: dict[str, Any] | None = None
+        try:
+            ctx.session.state[EDGE_OUTPUT_KEY] = ""
+            yield Event(
+                author=self.name,
+                content=types.Content(
+                    role="user",
+                    parts=[types.Part(text=f"LOSS-OF-SIGNAL SCENARIO:\n{json.dumps(scenario)}")],
+                ),
+            )
+            async for event in self.edge_autopilot.run_async(ctx):
+                yield event
+            raw = ctx.session.state.get(EDGE_OUTPUT_KEY, "")
+            parsed = _extract_json(raw)
+            errors = validate_edge_decision(parsed)
+            if errors:
+                raise ValueError("edge verdict schema violation: " + "; ".join(errors))
+            verdict = parsed
+        except Exception as exc:  # noqa: BLE001 — ROM rule must cover everything
+            audit_logger.log_event(
+                trace_id=trace_id,
+                agent_name=self.edge_autopilot.name,
+                event_type="EDGE_LLM_UNAVAILABLE",
+                payload={"tag": "EDGE_AUTONOMOUS", "error_type": type(exc).__name__, "error": str(exc)[:200]},
+                status="DEGRADED",
+            )
+            yield self._status_event("Onboard inference unavailable — falling back to hardcoded ROM rule.")
+
+        if verdict is None:
+            fuel_hint = scenario.get("fuel_percentage_remaining")
+            verdict = deterministic_edge_decision(pc, recommended_dv, float(fuel_hint) if fuel_hint is not None else None)
+
+        # ---- Deterministic enforcement: physics outranks the model ----------
+        direction = verdict["direction"]
+        execute = verdict["decision"] == "EXECUTE_DODGE"
+        dv = min(max(0.0, float(verdict.get("dv_mps") or 0.0)), MAX_ALLOWED_DELTA_V_MPS)
+        if execute:
+            if dv <= 0.0 or direction not in ("prograde", "retrograde", "normal"):
+                execute = False
+                verdict["reasoning"] = f"Downgraded to HOLD by onboard enforcement: unusable burn ({dv:.2f} m/s, {direction})."
+            else:
+                state = await self.mission_memory_for_execution().get_satellite_state(sat_id)
+                projected_fuel = estimate_fuel_after_burn(float(state["fuel_percentage"]), dv)
+                if projected_fuel < EDGE_FUEL_RESERVE_PERCENT:
+                    execute = False
+                    verdict["reasoning"] = (
+                        f"Downgraded to HOLD by onboard enforcement: burn would leave "
+                        f"{projected_fuel:.1f}% fuel < {EDGE_FUEL_RESERVE_PERCENT:.0f}% reserve."
+                    )
+                elif pc <= EDGE_PC_THRESHOLD:
+                    execute = False
+                    verdict["reasoning"] = (
+                        f"Downgraded to HOLD by onboard enforcement: pc={pc:.2e} does not exceed "
+                        f"the {EDGE_PC_THRESHOLD:.0e} autonomy threshold."
+                    )
+
+        source = str(verdict.get("source", "gemma_edge_llm"))
+        audit_logger.log_event(
+            trace_id=trace_id,
+            agent_name=self.edge_autopilot.name,
+            event_type="EDGE_DECISION_FINAL",
+            payload={
+                "tag": "EDGE_AUTONOMOUS",
+                "decision_source": source,
+                "verdict": {**verdict, "dv_mps": dv},
+                "enforced_pc_threshold": EDGE_PC_THRESHOLD,
+            },
+            status="EXECUTED" if execute else "HELD",
+        )
+        ctx.session.state[EDGE_OUTPUT_KEY + ":final"] = {**verdict, "executed": execute}
+
+        conjunction_id = safe_document_id(f"{sat_id}-X-{debris_id}-TCA-{screening['tca_iso']}")
+
+        if execute:
+            new_fuel = estimate_fuel_after_burn(
+                float((await self.mission_memory_for_execution().get_satellite_state(sat_id))["fuel_percentage"]), dv
+            )
+            await self.mission_memory_for_execution().update_satellite_state(sat_id, delta_v_expended=dv, new_fuel=new_fuel)
+            await self.mission_memory_for_execution().log_conjunction_event(
+                conjunction_id,
+                {
+                    "sat_id": sat_id.upper(),
+                    "debris_id": debris_id.upper(),
+                    "tca_iso": screening["tca_iso"],
+                    "risk_band": "HIGH",
+                    "pc": pc,
+                    "miss_distance_km": screening.get("miss_distance_km"),
+                    "action_taken": "emergency_dodge_edge_autonomous",
+                    "our_dv_mps": dv,
+                    "their_dv_mps": None,
+                    "ack_signature_present": False,
+                    "armor_trace_id": None,
+                    "edge_autonomous": True,
+                    "decision_source": source,
+                    "trace_id": trace_id,
+                    "final_status": STATUS_EDGE_AUTONOMOUS_DODGE,
+                },
+            )
+            decision_state = {
+                "decision": STATUS_EDGE_AUTONOMOUS_DODGE,
+                "action": "emergency_dodge_edge_autonomous",
+                "our_dv_mps": dv,
+                "direction": direction,
+                "conjunction_id": conjunction_id,
+                "decision_source": source,
+                "reasoning": verdict.get("reasoning", ""),
+                "memory_bank_updated": True,
+            }
+            ctx.session.state[STATE_EXECUTION_DECISION] = decision_state
+            yield self._status_event(
+                f"EDGE AUTONOMOUS DODGE EXECUTED — {dv:.1f} m/s {direction} uplinked without ground approval."
+            )
+            self.queue_debrief(conjunction_id, {
+                **scenario,
+                # `scenario` is the onboard view and carries no band; the
+                # edge autopilot only ever engages on HIGH.
+                "risk_band": screening.get("risk_band") or "HIGH",
+                "action_taken": "emergency_dodge_edge_autonomous",
+                "our_dv_mps": dv,
+                "direction": direction,
+                "final_status": STATUS_EDGE_AUTONOMOUS_DODGE,
+                "trace_id": trace_id,
+                "decision_source": source,
+            })
+            yield self._finish(ctx, STATUS_EDGE_AUTONOMOUS_DODGE)
+            return
+
+        dispatch = self._open_human_dispatch(
+            ctx,
+            "Ground pipeline unreachable and the onboard autopilot held instead of acting; operator review required.",
+            edge_verdict={k: v for k, v in verdict.items() if k != "source"},
+            decision_source=source,
+            trigger=trigger,
+        )
+        decision_state = {
+            "decision": STATUS_EDGE_HELD,
+            "conjunction_id": conjunction_id,
+            "decision_source": source,
+            "human_in_loop_required": True,
+        }
+        ctx.session.state[STATE_EXECUTION_DECISION] = decision_state
+        yield self._status_event(f"Onboard autopilot HOLDS ({dispatch['reason'][:80]}…) — human dispatch opened.")
+        yield self._finish(ctx, STATUS_EDGE_HELD)
+
+    def queue_debrief(self, conjunction_id: str, record: dict[str, Any]) -> None:
+        """Fire-and-forget Veo debrief generation (never blocks the mission)."""
+        task = asyncio.create_task(generate_and_store_debrief(conjunction_id, record))
+        task.add_done_callback(
+            lambda t: t.exception() is not None
+            and audit_logger.log_event(
+                trace_id=str(record.get("trace_id", "debrief")),
+                agent_name="orbit.debrief",
+                event_type="DEBRIEF_TASK_FAILED",
+                payload={"error": str(t.exception())[:300]},
+                status="FAILED",
+            )
+        )
+
     # -- mission control flow -------------------------------------------------
 
     async def _run_async_impl(self, ctx: InvocationContext) -> AsyncGenerator[Event, None]:
@@ -539,6 +791,17 @@ class FleetCommanderPipeline(BaseAgent):
         async for event in self._guarded_invoke(ctx, agent=self.negotiation_officer, state_key=NEGOTIATION_OUTPUT_KEY, validator=_validate_negotiation):
             yield event
         if not ctx.session.state.get(f"{NEGOTIATION_OUTPUT_KEY}:ok"):
+            # Ground pipeline cannot finish a HIGH-risk response — the
+            # flight analogue of losing downlink mid-incident. Triage and
+            # screening breakers do NOT engage the autopilot because with
+            # no validated Pc the spacecraft has nothing safe to act on.
+            if self._edge_autonomy_enabled():
+                yield self._status_event("Ground negotiation unreachable (circuit breaker). Waking the onboard Gemma autopilot…")
+                async for event in self._edge_autonomy(
+                    ctx, dossier=dossier, screening=screening, trigger="negotiation_circuit_breaker_tripped"
+                ):
+                    yield event
+                return
             self._open_human_dispatch(
                 ctx,
                 "Negotiation unavailable after retries on a HIGH-risk conjunction.",
@@ -570,7 +833,16 @@ class FleetCommanderPipeline(BaseAgent):
         armor_ok = bool(ctx.session.state.get(f"{VERDICT_OUTPUT_KEY}:ok"))
 
         if not armor_ok:
-            # FAIL-CLOSED: no armour verdict means NO execution, ever.
+            # FAIL-CLOSED: no armour verdict means NO ground execution, ever.
+            # The onboard autopilot may still act inside its own, much
+            # stricter autonomy envelope (Pc > 1e-3, dv ceiling, fuel floor).
+            if self._edge_autonomy_enabled():
+                yield self._status_event("Safety Officer unreachable (circuit breaker). Waking the onboard Gemma autopilot…")
+                async for event in self._edge_autonomy(
+                    ctx, dossier=dossier, screening=screening, trigger="armor_checkpoint_circuit_breaker_tripped"
+                ):
+                    yield event
+                return
             self._open_human_dispatch(
                 ctx,
                 "Model Armour unavailable after retries — fail-closed policy forbids execution.",
@@ -614,6 +886,10 @@ class FleetCommanderPipeline(BaseAgent):
         report = await inspector.inspect_maneuver_request(submission, enriched_verdict)
         yield self._status_event(f"Deterministic Model Armour sweep: {report.status} (trace {report.audit_trace_id[:8]}…).")
 
+        # Stable document ID for this conjunction — shared by the memory-bank
+        # record and the autonomous Veo mission-debrief.
+        conjunction_id = safe_document_id(f"{dossier['sat_id']}-X-{dossier['debris_id']}-TCA-{screening['tca_iso']}")
+
         if report.status != "APPROVED":
             decision = {
                 "decision": STATUS_MANEUVER_BLOCKED,
@@ -621,6 +897,7 @@ class FleetCommanderPipeline(BaseAgent):
                 "checks": report.checks,
                 "audit_trace_id": report.audit_trace_id,
                 "memory_bank_updated": False,
+                "conjunction_id": conjunction_id,
             }
             ctx.session.state[STATE_EXECUTION_DECISION] = decision
             self._log_observation(
@@ -636,7 +913,40 @@ class FleetCommanderPipeline(BaseAgent):
                 violations=report.violations,
                 audit_trace_id=report.audit_trace_id,
             )
+            await self.mission_memory_for_execution().log_conjunction_event(
+                conjunction_id,
+                {
+                    "sat_id": str(dossier["sat_id"]).upper(),
+                    "debris_id": str(dossier["debris_id"]).upper(),
+                    "tca_iso": screening["tca_iso"],
+                    "risk_band": band,
+                    "pc": screening["pc"],
+                    "miss_distance_km": screening["miss_distance_km"],
+                    "action_taken": negotiation["action"],
+                    "our_dv_mps": _coerce_number(negotiation.get("our_dv_mps")) or 0.0,
+                    "their_dv_mps": _coerce_number(negotiation.get("their_dv_mps")),
+                    "ack_signature_present": bool(negotiation.get("ack_signature")),
+                    "armor_trace_id": report.audit_trace_id,
+                    "trace_id": trace_id,
+                    "final_status": STATUS_MANEUVER_BLOCKED,
+                },
+            )
             yield self._status_event(f"Manoeuvre BLOCKED by Model Armour ({'; '.join(report.violations)}).")
+            self.queue_debrief(
+                conjunction_id,
+                {
+                    "sat_id": dossier["sat_id"],
+                    "debris_id": dossier["debris_id"],
+                    "tca_iso": screening["tca_iso"],
+                    "risk_band": band,
+                    "pc": screening["pc"],
+                    "miss_distance_km": screening["miss_distance_km"],
+                    "action_taken": negotiation["action"],
+                    "final_status": STATUS_MANEUVER_BLOCKED,
+                    "violations": report.violations,
+                    "trace_id": trace_id,
+                },
+            )
             yield self._finish(ctx, STATUS_MANEUVER_BLOCKED)
             return
 
@@ -667,6 +977,8 @@ class FleetCommanderPipeline(BaseAgent):
                 "their_dv_mps": _coerce_number(negotiation.get("their_dv_mps")),
                 "ack_signature_present": bool(negotiation.get("ack_signature")),
                 "armor_trace_id": report.audit_trace_id,
+                "trace_id": trace_id,
+                "final_status": STATUS_EXECUTION_AUTHORIZED,
             },
         )
 
@@ -680,10 +992,26 @@ class FleetCommanderPipeline(BaseAgent):
             "armor_checks": report.checks,
             "audit_trace_id": report.audit_trace_id,
             "memory_bank_updated": memory_updated,
+            "conjunction_id": conjunction_id,
         }
         ctx.session.state[STATE_EXECUTION_DECISION] = decision
         self._log_observation(ctx, "INFO", self.name, "Manoeuvre APPROVED end-to-end; authorised for uplink.", decision=decision)
         yield self._status_event("Model Armour APPROVED all checks. Manoeuvre authorised for uplink; fleet state persisted.")
+        self.queue_debrief(
+            conjunction_id,
+            {
+                "sat_id": sat_id,
+                "debris_id": dossier["debris_id"],
+                "tca_iso": screening["tca_iso"],
+                "risk_band": band,
+                "pc": screening["pc"],
+                "miss_distance_km": screening["miss_distance_km"],
+                "action_taken": negotiation["action"],
+                "our_dv_mps": our_dv,
+                "final_status": STATUS_EXECUTION_AUTHORIZED,
+                "trace_id": trace_id,
+            },
+        )
         yield self._finish(ctx, STATUS_EXECUTION_AUTHORIZED)
 
 
@@ -701,11 +1029,13 @@ fleet_commander_agent = FleetCommanderPipeline(
     astrodynamics_specialist=astrodynamics_agent,
     negotiation_officer=diplomat_agent,
     model_armor_checkpoint=safety_officer_agent,
+    edge_autopilot=gemma_edge_agent,
     mission_memory=get_shared_memory_bank(),
     armor_inspector=get_shared_model_armor(),
     # Registered as formal sub-agents so ADK tooling (tree walkers, `adk
-    # web`, agent discovery) sees the full fleet hierarchy.
-    sub_agents=[alert_triage_agent, astrodynamics_agent, diplomat_agent, safety_officer_agent],
+    # web`, agent discovery) sees the full fleet hierarchy — including the
+    # satellite-side Gemma autopilot.
+    sub_agents=[alert_triage_agent, astrodynamics_agent, diplomat_agent, safety_officer_agent, gemma_edge_agent],
 )
 
 
@@ -723,7 +1053,7 @@ def _attest_tool_scopes() -> None:
     as permits.
     """
     registry = get_shared_registry()
-    for member in (astrodynamics_agent, diplomat_agent):
+    for member in (astrodynamics_agent, diplomat_agent, gemma_edge_agent):
         for tool in member.tools or []:
             tool_name = getattr(tool, "name", None) or tool.func.__name__
             if not registry.authorize_tool_use(member.name, tool_name):
@@ -736,6 +1066,8 @@ def _attest_tool_scopes() -> None:
         ("negotiation_officer", "screen_conjunction"),
         ("safety_officer", "get_tle_data"),
         ("fleet_commander", "screen_conjunction"),
+        ("gemma_edge_autopilot", "screen_conjunction"),
+        ("gemma_edge_autopilot", "get_tle_data"),
         ("unregistered_intruder", "screen_conjunction"),
     )
     for agent_name, tool_name in negative_controls:
@@ -752,6 +1084,8 @@ __all__ = [
     "AGENT_NAME",
     "BREAKER_BACKOFF_SECONDS",
     "BREAKER_MAX_ATTEMPTS",
+    "STATUS_EDGE_AUTONOMOUS_DODGE",
+    "STATUS_EDGE_HELD",
     "STATUS_MANEUVER_BLOCKED",
     "FleetCommanderPipeline",
     "STATE_FINAL_STATUS",

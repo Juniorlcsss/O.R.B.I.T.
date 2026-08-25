@@ -57,7 +57,11 @@ conjunction-response pipeline:
 | Strategic Fuel Reserve | burn projecting 2.75% < 5% reserve → REJECTED |
 | Secret/PII sweep | planted AWS key + email caught by pattern label; content never echoed |
 | End-to-end degraded mode (no LLM credentials) | triage breaker trips after 3 attempts → structured `HUMAN_DISPATCH_DEGRADED` + full audit replay |
-| API surface | 10/10 endpoint checks passing against real `google-adk` 2.7.1 |
+| Edge autonomy wiring | `gemma_edge_autopilot` live in `/api/agent_tree` with its single `emergency_dodge` tool; ROM rule executes above Pc 1e-3, holds below it, caps an 80 m/s request to the 50 m/s ceiling and refuses fuel-reserve breaches |
+| Edge autonomy end-to-end (no LLM reachable) | breaker trigger → `EDGE_AUTONOMY_ENGAGED` → `EDGE_LLM_UNAVAILABLE` → ROM verdict → `EDGE_AUTONOMOUS_DODGE_EXECUTED`, 12.0 m/s uplinked, Memory Bank fuel debited, debrief attached — every line tagged `EDGE_AUTONOMOUS` |
+| Autonomous Veo debrief | terminal mission → debrief `READY` attached to the conjunction record; simulated reconstruction renders fully offline, honest about its mode |
+| Lyria event cues | all 5 cue types served as valid 22.05 kHz mono WAV from `/api/audio/{event_type}` (0.32 s–1.70 s, 14–75 kB), memoised after first render; unknown types rejected with the available list |
+| API surface | all endpoint smoke checks passing against real `google-adk` (including new `/api/debrief/{id}` and `/api/audio/{event_type}`) |
 
 ---
 
@@ -97,13 +101,85 @@ conjunction-response pipeline:
 
 | Component | Technology |
 |-----------|------------|
-| AI Models | Gemini 2.5 Pro (alert triage), Gemini 2.5 Flash (astrodynamics + negotiation), Gemini 3.5 Flash default for safety verdicts (env-tunable) |
+| AI Models | Gemini 2.5 Pro (alert triage), Gemini 2.5 Flash (astrodynamics + negotiation), Gemini 3.5 Flash default for safety verdicts (env-tunable), **Gemma 3 (onboard edge autonomy)** |
+| Generative Media | **Veo 3** (autonomous mission-debrief video), **Lyria 2** (mission-control audio cues) |
 | Agent Framework | Google Agent Development Kit (ADK) 2.7.1 |
 | Orbital Mechanics | python-sgp4 propagation, three-stage TCA refinement, Chan's first-order Gaussian Pc |
 | Cloud Infrastructure | Cloud Run, Firestore (async client), Cloud Logging |
+| Command Center | React + Vite, CesiumJS globe, Server-Sent Events live feed |
 | API Framework | FastAPI, Uvicorn |
 | Security | Constant-time API-key middleware, zero-trust Agent Registry, dual-layer maneuver gating |
 | Observability | Mission-scoped trace IDs, OTel-style structured JSON logging |
+
+---
+
+## 🎁 Additional AI Integrations
+
+Three extra Google models give the fleet senses beyond Gemini reasoning:
+an onboard brain for when Earth goes quiet, a documentarian for when the
+mission ends, and a soundtrack for while it happens.
+
+```mermaid
+flowchart TB
+    subgraph space["🛰️ Space segment — autonomous when Earth is out of reach"]
+        EDGE["Gemma Edge Autopilot<br/>exactly 1 tool: emergency_dodge()<br/>Pc > 1e-3 · dv ≤ 50 m/s · fuel ≥ 5% · 30 s window"]
+        SAT[("CubeSat")]
+        EDGE --- SAT
+    end
+
+    subgraph ground["🌍 Ground segment — Google ADK fleet"]
+        FC["FleetCommanderPipeline<br/>(deterministic control plane)"]
+    end
+
+    subgraph media["🎬 Autonomous reporting & sound"]
+        VEO["Veo 3 mission debriefs<br/>GET /api/debrief/{conjunction_id}"]
+        LYRIA["Lyria audio cues<br/>GET /api/audio/{event_type}"]
+    end
+
+    FC -->|"negotiation or armour breaker trips on HIGH risk"| EDGE
+    FC -.->|"terminal mission status"| VEO
+    FC -.->|"SSE audit stream"| LYRIA
+```
+
+### 1. Gemma Edge Autopilot — `agents/edge_agent.py`
+
+When a HIGH-risk conjunction is mid-flight and the ground pipeline cannot
+finish (negotiation or armour circuit breaker trips), the mission hands over
+to a satellite-side **Gemma** agent — the flight analogue of losing downlink
+during an incident. It holds exactly one tool (`emergency_dodge`), one
+30-second decision window, and stricter physics than Model Armor applies:
+Pc must exceed 1e-3, the burn stays under the 50 m/s ceiling and never eats
+into the 5% strategic fuel reserve. If inference itself is unavailable, a
+hardcoded ROM rule decides instead — the spacecraft never waits for a model.
+Every edge decision is audited with the **`EDGE_AUTONOMOUS`** tag, and the
+feature is kill-switchable via `ORBIT_ENABLE_EDGE_AUTONOMY=0`.
+
+### 2. Veo Mission Debriefs — `tools/debrief_generator.py`
+
+The fleet doesn't just solve problems — it documents them. When a mission
+terminates (`EXECUTION_AUTHORIZED`, `MANEUVER_BLOCKED`, or an autonomous
+edge dodge), a background task renders a cinematic summary of the encounter,
+generates a debrief video with **Veo 3**, and attaches it to the conjunction
+record in Firestore. `GET /api/debrief/{conjunction_id}` serves generation
+status plus the artifact, and the command center surfaces a MISSION DEBRIEF
+button the moment a conjunction resolves.
+
+### 3. Lyria Mission-Control Audio — `tools/audio_generator.py`
+
+You can hear the fleet think. Each key event class owns a generated audio
+identity — rising alert (`ALERT_DETECTED`), resolving chord
+(`MANEUVER_AUTHORIZED`), low cautionary drone (`MANEUVER_BLOCKED`), urgent
+triple-beep (`HUMAN_DISPATCH`) and an edge-autonomy chirp
+(`EDGE_AUTONOMOUS`) — produced by **Lyria 2** and served as memoised WAV
+from `GET /api/audio/{event_type}`. The MissionFeed plays the matching cue
+as events stream in over SSE.
+
+> **Honesty note:** Veo and Lyria calls are gated behind
+> `ORBIT_ENABLE_REAL_VEO=1` / `ORBIT_ENABLE_REAL_LYRIA=1`. Without them (or
+> without Vertex credentials) both integrations degrade to clearly-labelled
+> deterministic simulations — an SVG reconstruction of the encounter and a
+> procedural synth cue respectively — so the demo works anywhere and never
+> pretends a mock is a real render.
 
 ---
 
@@ -176,8 +252,23 @@ Response:
   "miss_distance_km": 0.0889,
   "pc": 0.000751,
   "action_taken": "they_dodge",
-  "armor_violations": null
+  "armor_violations": null,
+  "conjunction_id": "LANCASTER_ORBIT_1-X-FENGYUN_1C_DEB-TCA-…"
 }
+```
+
+### Fetch the autonomous mission debrief
+
+```bash
+curl "https://<your-service>.run.app/api/debrief/<conjunction_id>" \
+  -H "X-API-Key: <your-api-key>"
+```
+
+### Hear the fleet
+
+```bash
+curl -o alert.wav "https://<your-service>.run.app/api/audio/ALERT_DETECTED" \
+  -H "X-API-Key: <your-api-key>"
 ```
 
 ### Prove the architecture
@@ -203,7 +294,7 @@ armor check and breaker transition — correlated by one trace ID.
 
 ```
 ORBIT/
-├── app.py                    # FastAPI application (6 endpoints, security, audit)
+├── app.py                    # FastAPI application (10 endpoints, security, audit)
 ├── Dockerfile                # Slim production container for Cloud Run
 ├── deploy.sh                 # Idempotent deployment + least-privilege SA bootstrap
 ├── logging.json              # Structured JSON logging config for uvicorn
@@ -211,13 +302,17 @@ ORBIT/
 ├── .env.example              # Environment template (never commit .env itself)
 ├── agents/
 │   ├── __init__.py           # Fleet exports + __version__
-│   ├── orchestrator.py       # FleetCommanderPipeline (BaseAgent), circuit breakers
+│   ├── orchestrator.py       # FleetCommanderPipeline (BaseAgent), circuit breakers, edge fallback
 │   ├── astro.py              # Astrodynamics specialist (SGP4 tooling)
 │   ├── diplomat.py           # Negotiation officer (external fleets)
-│   └── safety.py             # Safety Officer (zero tools, fail-closed)
+│   ├── safety.py             # Safety Officer (zero tools, fail-closed)
+│   └── edge_agent.py         # Gemma Edge Autopilot (one tool: emergency_dodge, EDGE_AUTONOMOUS)
 ├── tools/
 │   ├── __init__.py
-│   └── space_tools.py        # TLE synthesis, SGP4 screening, fleet negotiation
+│   ├── space_tools.py        # TLE synthesis, SGP4 screening, fleet negotiation
+│   ├── debrief_generator.py  # Veo 3 mission-debrief video + simulated reconstruction
+│   └── audio_generator.py    # Lyria 2 event cues + offline procedural synth
+├── frontend/                 # React command center (CesiumJS globe, SSE feed, debrief viewer)
 └── geap_sim/
     ├── __init__.py
     ├── memory_bank.py        # Firestore-backed persistent satellite state
@@ -248,6 +343,13 @@ hide them:
   accessibility; production would front this with proper identity.
 - **Safety-verdict model tier is env-configurable** and defaults to
   `gemini-3.5-flash`; swapping tiers is a one-line change.
+- **Veo + Lyria artifacts are simulated unless explicitly enabled.** The
+  debrief reconstruction and audio cues render deterministically offline;
+  real Vertex AI generation requires `ORBIT_ENABLE_REAL_VEO=1` /
+  `ORBIT_ENABLE_REAL_LYRIA=1` plus credentials.
+- **Edge autonomy is a demo envelope, not flight certification.** The Gemma
+  autopilot's thresholds (Pc > 1e-3, dv ceiling, fuel reserve) mirror the
+  ground policy but nothing here is CCSDS-qualified hardware.
 
 ---
 
@@ -258,9 +360,8 @@ hide them:
 - **Swap `geap_sim` for the actual GEAP platform** — managed identity, agent
   registry and Model Armor replace the simulations one module at a time; the
   seams are already isolated.
-- **Veo + Gemma bonus integrations** — Veo-generated mission visualisations
-  for operator training, and a Gemma-based on-device assistant for ground
-  stations with intermittent connectivity.
+- **True on-device Gemma** — quantised GGUF inference on the flight computer
+  so edge autonomy works with zero connectivity, no Vertex round-trip.
 - **Conjunction storms** — `LoopAgent` continuous monitoring and multi-object
   deconfliction when one maneuver creates new conjunctions downstream.
 - **Production hardening** — Terraform IaC, CI with a pytest suite, OIDC

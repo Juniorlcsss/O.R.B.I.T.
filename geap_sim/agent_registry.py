@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MANIFEST_SCHEMA_VERSION: Final[str] = "1.0.0"
 
-_FLEET_VERSION: Final[str] = "0.2.0"
+_FLEET_VERSION: Final[str] = "0.3.0"
 
 
 class AgentManifest(BaseModel):
@@ -71,6 +71,16 @@ _DEFAULT_MANIFESTS: Final[tuple[AgentManifest, ...]] = (
         description="Model Armour checkpoint; sole authority for approving or rejecting manoeuvres.",
         allowed_tools=[],
         identity_scope="safety.adjudication",
+    ),
+    AgentManifest(
+        agent_name="gemma_edge_autopilot",
+        version=_FLEET_VERSION,
+        description=(
+            "Satellite-side Gemma autopilot for loss-of-signal operations. "
+            "Holds exactly one tool: the autonomous avoidance-burn uplink."
+        ),
+        allowed_tools=["emergency_dodge"],
+        identity_scope="edge.autonomy",
     ),
 )
 

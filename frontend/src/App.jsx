@@ -5,6 +5,7 @@ import FleetStatus from "./components/FleetStatus.jsx";
 import ArmorLog from "./components/ArmorLog.jsx";
 import ConjunctionAlert from "./components/ConjunctionAlert.jsx";
 import SettingsPanel from "./components/SettingsPanel.jsx";
+import MissionDebrief from "./components/MissionDebrief.jsx";
 import { IconSettings } from "./components/icons.jsx";
 import useLiveFeed from "./hooks/useLiveFeed.js";
 import useOrbitalState from "./hooks/useOrbitalState.js";
@@ -56,6 +57,9 @@ export default function App() {
   const [pending, setPending] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [announcement, setAnnouncement] = useState("");
+  // Most recent resolved conjunction — the MISSION DEBRIEF entry point.
+  const [debriefId, setDebriefId] = useState(null);
+  const [debriefOpen, setDebriefOpen] = useState(false);
   const announcedRef = useRef(new Set());
 
   const satellites = useMemo(() => objects.filter((o) => o.type === "satellite"), [objects]);
@@ -76,6 +80,11 @@ export default function App() {
     });
     if (response.status === "EXECUTION_AUTHORIZED") {
       setManeuver({ satId: request.sat_id, startedAt: Date.now() });
+    }
+    // The fleet documented its own solution — surface the debrief entry.
+    if (response.conjunction_id) {
+      setDebriefId(response.conjunction_id);
+      setDebriefOpen(false);
     }
   }
 
@@ -173,6 +182,15 @@ export default function App() {
               Maneuver &middot; <span className="font-mono">{maneuver.satId}</span>
             </span>
           )}
+          {debriefId && !debriefOpen && (
+            <button
+              onClick={() => setDebriefOpen(true)}
+              className="flex items-center gap-2 rounded border border-accent/50 px-2.5 py-1.5 text-sm text-accent transition-colors duration-150 ease-console hover:border-accent hover:bg-accent/10"
+              title="Autonomous Veo-generated mission debrief"
+            >
+              Mission debrief
+            </button>
+          )}
           <button onClick={() => setAlertOpen(true)} className="btn-primary">
             Trigger conjunction alert
           </button>
@@ -239,6 +257,7 @@ export default function App() {
         debris={debris}
         onMissionComplete={handleMissionComplete}
       />
+      <MissionDebrief open={debriefOpen} onClose={() => setDebriefOpen(false)} conjunctionId={debriefId} />
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );

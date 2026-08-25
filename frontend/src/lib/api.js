@@ -40,3 +40,33 @@ export function beep(frequency = 660, durationMs = 120, gain = 0.05) {
     /* audio is a nicety; never break the feed over it */
   }
 }
+
+// --- Mission-control audio cues (Lyria-backed GET /api/audio/{event}) -------
+// <audio src> cannot send X-API-KEY, so clips are fetched as blobs and kept
+// as object URLs for the session; one download per cue type, ever.
+
+const audioClipCache = new Map();
+
+export async function playEventAudio(eventType) {
+  try {
+    let clipUrl = audioClipCache.get(eventType);
+    if (!clipUrl) {
+      const response = await fetch(`/api/audio/${encodeURIComponent(eventType)}`, { headers: apiHeaders() });
+      if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+      clipUrl = URL.createObjectURL(await response.blob());
+      audioClipCache.set(eventType, clipUrl);
+    }
+    const element = new Audio(clipUrl);
+    element.volume = 0.6;
+    await element.play();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// --- Autonomous Veo mission debriefs ----------------------------------------
+
+export function fetchDebrief(conjunctionId) {
+  return apiFetch(`/api/debrief/${encodeURIComponent(conjunctionId)}`);
+}
