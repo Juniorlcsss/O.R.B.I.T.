@@ -81,6 +81,7 @@ from .edge_agent import (
     validate_edge_decision,
 )
 from .safety import MAX_ALLOWED_DELTA_V_MPS, safety_officer_agent
+from .watcher import watcher_agent
 from tools.debrief_generator import generate_and_store_debrief
 
 # ---------------------------------------------------------------------------
@@ -305,12 +306,16 @@ class FleetCommanderPipeline(BaseAgent):
     discretion, which is what makes the safety guarantees enforceable.
     """
 
-    alert_triage: LlmAgent
-    astrodynamics_specialist: LlmAgent
-    negotiation_officer: LlmAgent
-    model_armor_checkpoint: LlmAgent
+    # Specialist slots accept any BaseAgent so evaluation harnesses can
+    # substitute scripted stand-ins with identical run_async contracts.
+    alert_triage: BaseAgent
+    astrodynamics_specialist: BaseAgent
+    negotiation_officer: BaseAgent
+    model_armor_checkpoint: BaseAgent
     #: Satellite-side Gemma autopilot (loss-of-signal fallback only).
     edge_autopilot: LlmAgent
+    #: Long-running conjunction watch supervisor (Phase 8).
+    watch_commander: BaseAgent
 
     #: GEAP MemoryBank — persistent satellite state & conjunction history.
     mission_memory: MemoryBank | None = None
@@ -320,7 +325,7 @@ class FleetCommanderPipeline(BaseAgent):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     @property
-    def specialists(self) -> tuple[LlmAgent, LlmAgent, LlmAgent]:
+    def specialists(self) -> tuple[BaseAgent, BaseAgent, BaseAgent]:
         """The three ground-side specialist agents routed to by this commander."""
         return (
             self.astrodynamics_specialist,
@@ -337,6 +342,7 @@ class FleetCommanderPipeline(BaseAgent):
             self.negotiation_officer.name,
             self.model_armor_checkpoint.name,
             self.edge_autopilot.name,
+            self.watch_commander.name,
         )
 
     def mission_memory_for_execution(self) -> MemoryBank:
@@ -1030,12 +1036,20 @@ fleet_commander_agent = FleetCommanderPipeline(
     negotiation_officer=diplomat_agent,
     model_armor_checkpoint=safety_officer_agent,
     edge_autopilot=gemma_edge_agent,
+    watch_commander=watcher_agent,
     mission_memory=get_shared_memory_bank(),
     armor_inspector=get_shared_model_armor(),
     # Registered as formal sub-agents so ADK tooling (tree walkers, `adk
     # web`, agent discovery) sees the full fleet hierarchy — including the
-    # satellite-side Gemma autopilot.
-    sub_agents=[alert_triage_agent, astrodynamics_agent, diplomat_agent, safety_officer_agent, gemma_edge_agent],
+    # satellite-side Gemma autopilot and the watch supervisor.
+    sub_agents=[
+        alert_triage_agent,
+        astrodynamics_agent,
+        diplomat_agent,
+        safety_officer_agent,
+        gemma_edge_agent,
+        watcher_agent,
+    ],
 )
 
 
@@ -1068,6 +1082,8 @@ def _attest_tool_scopes() -> None:
         ("fleet_commander", "screen_conjunction"),
         ("gemma_edge_autopilot", "screen_conjunction"),
         ("gemma_edge_autopilot", "get_tle_data"),
+        ("watch_commander", "screen_conjunction"),
+        ("watch_commander", "recall_similar_conjunctions"),
         ("unregistered_intruder", "screen_conjunction"),
     )
     for agent_name, tool_name in negative_controls:

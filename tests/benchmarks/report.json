@@ -1,0 +1,54 @@
+{
+  "generated_utc": "2026-08-26T00:26:37.637805+00:00",
+  "note": "offline-scripted harness; LLM/network latency excluded by design",
+  "results": [
+    {
+      "benchmark": "SGP4 conjunction screening",
+      "samples": 150,
+      "mean_ms": 0.61,
+      "p50_ms": 0.6,
+      "p95_ms": 0.68,
+      "p99_ms": 1.04
+    },
+    {
+      "benchmark": "Model Armor 4-check inspection",
+      "samples": 200,
+      "mean_ms": 0.09,
+      "p50_ms": 0.09,
+      "p95_ms": 0.11,
+      "p99_ms": 0.14
+    },
+    {
+      "benchmark": "Memory-bank state read",
+      "samples": 300,
+      "mean_ms": 0.0,
+      "p50_ms": 0.0,
+      "p95_ms": 0.01,
+      "p99_ms": 0.01
+    },
+    {
+      "benchmark": "Memory-bank burn write",
+      "samples": 300,
+      "mean_ms": 0.03,
+      "p50_ms": 0.03,
+      "p95_ms": 0.04,
+      "p99_ms": 0.06
+    },
+    {
+      "benchmark": "End-to-end mission (scripted, offline)",
+      "samples": 40,
+      "mean_ms": 23.9,
+      "p50_ms": 4.34,
+      "p95_ms": 5.18,
+      "p99_ms": 784.48
+    },
+    {
+      "benchmark": "`import app` cold-start floor (subprocess)",
+      "samples": 3,
+      "mean_ms": 2053.18,
+      "p50_ms": 1974.97,
+      "p95_ms": 2198.73,
+      "p99_ms": 2198.73
+    }
+  ]
+}

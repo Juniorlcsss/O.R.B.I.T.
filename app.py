@@ -12,6 +12,11 @@ Exposes the FleetCommanderPipeline to the world:
 * ``GET  /api/live_feed``       — Server-Sent-Events stream of audit events.
 * ``GET  /api/debrief/{conjunction_id}`` — autonomous Veo mission-debrief video.
 * ``GET  /api/audio/{event_type}``       — Lyria mission-control audio cue.
+* ``POST /api/watches``                  — start a persistent conjunction watch.
+* ``GET  /api/watches``                  — list watches (optional status filter).
+* ``GET  /api/watches/{watch_id}``       — one watch document.
+* ``POST /api/watches/{watch_id}/approval`` — human gate on escalation.
+* ``POST /api/watches/{watch_id}/close`` — manually close a watch.
 
 Security: every ``/api/*`` route requires an ``X-API-Key`` header matching
 the ``ORBIT_API_KEY`` environment variable (constant-time comparison).
@@ -54,6 +59,7 @@ from agents.orchestrator import (
     STATE_TRACE_ID,
     fleet_commander_agent,
 )
+from agents.watcher import watcher_agent
 from geap_sim.agent_registry import get_shared_registry
 from geap_sim.memory_bank import get_shared_memory_bank
 from geap_sim.model_armor import STATUS_APPROVED
@@ -104,7 +110,45 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         payload={"agents": list(registry_agents), "fleet_version": FLEET_VERSION},
         status="APPROVED",
     )
-    yield
+
+    # Long-running watch supervisor: crash recovery first (reload persisted
+    # watches, audit the resume), then the periodic heartbeat task.
+    watcher_agent.escalation_handler = _watch_escalation_handler
+    resumed = await watcher_agent.resume_active_watches()
+    supervisor_task = asyncio.create_task(watcher_agent.supervisor_loop())
+    audit_logger.log_event(
+        trace_id="startup",
+        agent_name="orbit.api",
+        event_type="WATCH_SUPERVISOR_ONLINE",
+        payload={"resumed_watches": resumed},
+        status="OK",
+    )
+    try:
+        yield
+    finally:
+        supervisor_task.cancel()
+        try:
+            await supervisor_task
+        except asyncio.CancelledError:
+            pass
+
+
+async def _watch_escalation_handler(watch: dict[str, Any]) -> dict[str, Any]:
+    """Bridge a human-approved watch escalation into a full fleet mission."""
+    response = await execute_mission(
+        {
+            "sat_id": str(watch.get("sat_id", "")),
+            "debris_id": str(watch.get("debris_id", "")),
+            "alert_source": "ORBIT_WATCH_ESCALATION",
+            "priority": "URGENT",
+            "raw_message": (
+                f"Watch {watch.get('watch_id')} escalated: risk band "
+                f"{watch.get('last_risk_band')} (Pc={watch.get('last_pc')}, "
+                f"miss={watch.get('last_miss_distance_km')} km). Human approval granted."
+            ),
+        }
+    )
+    return {"trace_id": response.trace_id, "status": response.status}
 
 
 app = FastAPI(
@@ -207,6 +251,22 @@ class ConjunctionAlertResponse(BaseModel):
     conjunction_id: Optional[str] = None
 
 
+class WatchRequest(BaseModel):
+    """Command to begin long-running monitoring of one conjunction pair."""
+
+    sat_id: str = Field(..., min_length=3, max_length=64, examples=["LANCASTER_ORBIT_1"])
+    debris_id: str = Field(..., min_length=3, max_length=64, examples=["FENGYUN_1C_DEB"])
+    interval_hours: float = Field(default=6.0, ge=1.0, le=72.0)
+    escalate_band: Literal["LOW", "MEDIUM", "HIGH"] = "HIGH"
+
+
+class WatchApprovalRequest(BaseModel):
+    """Human verdict on a watch escalation awaiting confirmation."""
+
+    approved_by: str = Field(..., min_length=3, max_length=64)
+    approved: bool = True
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -253,14 +313,17 @@ def _mission_response(trace_id: str, state: dict[str, Any]) -> ConjunctionAlertR
 # ---------------------------------------------------------------------------
 
 
-@app.post("/api/conjunction_alert", response_model=ConjunctionAlertResponse)
-async def conjunction_alert(payload: ConjunctionAlertRequest) -> ConjunctionAlertResponse:
-    """Execute a full collision-response mission for one conjunction alert.
+# ---------------------------------------------------------------------------
+# Mission execution (shared by the HTTP API and watch escalations)
+# ---------------------------------------------------------------------------
 
-    The alert is normalised by alert_triage, screened by the astrodynamics
-    specialist and — when warranted — negotiated and gated through both the
-    LLM Safety Officer and the deterministic Model Armour sweep before any
-    execution decision is persisted.
+
+async def execute_mission(alert: dict[str, Any]) -> ConjunctionAlertResponse:
+    """Run one full collision-response mission for a normalised alert dict.
+
+    Single entry point for both the ``/api/conjunction_alert`` endpoint and
+    the WatchCommander's escalation handler, guaranteeing that watches and
+    operator-triggered missions share identical pipeline semantics.
     """
     trace_id = uuid.uuid4().hex
     try:
@@ -271,7 +334,7 @@ async def conjunction_alert(payload: ConjunctionAlertRequest) -> ConjunctionAler
         )
         message = genai_types.Content(
             role="user",
-            parts=[genai_types.Part(text=json.dumps({"alert": payload.model_dump()}))],
+            parts=[genai_types.Part(text=json.dumps({"alert": alert}))],
         )
         async for _ in runner.run_async(user_id=session.user_id, session_id=session.id, new_message=message):
             pass  # events stream into the session; final state is authoritative
@@ -293,6 +356,19 @@ async def conjunction_alert(payload: ConjunctionAlertRequest) -> ConjunctionAler
             status_code=500,
             detail={"message": "Mission pipeline failed; quote the trace_id to operators.", "trace_id": trace_id},
         ) from exc
+
+
+@app.post("/api/conjunction_alert", response_model=ConjunctionAlertResponse)
+async def conjunction_alert(payload: ConjunctionAlertRequest) -> ConjunctionAlertResponse:
+    """Execute a full collision-response mission for one conjunction alert.
+
+    The alert is normalised by alert_triage, screened by the astrodynamics
+    specialist (now grounded in vector-memory recall of similar past
+    encounters) and — when warranted — negotiated and gated through both
+    the LLM Safety Officer and the deterministic Model Armour sweep before
+    any execution decision is persisted.
+    """
+    return await execute_mission(payload.model_dump())
 
 
 @app.get("/health")
@@ -392,6 +468,66 @@ async def event_audio(event_type: str) -> Response:
         media_type=MEDIA_TYPE,
         headers={"Cache-Control": "public, max-age=3600", "X-ORBIT-AUDIO-SOURCE": "orbit.audio"},
     )
+
+
+@app.post("/api/watches")
+async def create_watch(payload: WatchRequest) -> dict[str, Any]:
+    """Start a persistent conjunction watch (idempotent per pair).
+
+    The WatchCommander re-screens the pair every ``interval_hours``; risk
+    rising to ``escalate_band`` parks the watch behind explicit human
+    approval before any fleet mission is triggered. State persists across
+    process restarts via the memory bank.
+    """
+    try:
+        return await watcher_agent.start_watch(
+            payload.sat_id,
+            payload.debris_id,
+            interval_hours=payload.interval_hours,
+            escalate_band=payload.escalate_band,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/watches")
+async def list_watches(status: str = Query(default=None, pattern="^(ACTIVE|AWAITING_HUMAN_APPROVAL|CLOSED_.*)?$")) -> dict[str, Any]:
+    """All conjunction watches, newest-check first."""
+    watches = await watcher_agent.list_watches(status or None)
+    watches.sort(key=lambda w: str(w.get("last_checked_utc") or w.get("created_utc")), reverse=True)
+    return {"count": len(watches), "watches": watches}
+
+
+@app.get("/api/watches/{watch_id}")
+async def get_watch(watch_id: str) -> dict[str, Any]:
+    """One watch document by ID."""
+    watch = await watcher_agent.get_watch(watch_id)
+    if watch is None:
+        raise HTTPException(status_code=404, detail={"message": "Unknown watch_id.", "watch_id": watch_id})
+    return watch
+
+
+@app.post("/api/watches/{watch_id}/approval")
+async def approve_watch(watch_id: str, payload: WatchApprovalRequest) -> dict[str, Any]:
+    """Human gate on an escalated watch (required before mission routing)."""
+    result = await watcher_agent.approve_escalation(watch_id, payload.approved_by, payload.approved)
+    if result is None:
+        raise HTTPException(status_code=404, detail={"message": "Unknown watch_id.", "watch_id": watch_id})
+    if result.get("error") == "not_awaiting_approval":
+        raise HTTPException(
+            status_code=409,
+            detail={"message": "Watch is not awaiting human approval.", "status": result.get("status")},
+        )
+    return result
+
+
+@app.post("/api/watches/{watch_id}/close")
+async def close_watch(watch_id: str) -> dict[str, Any]:
+    """Manually close one watch."""
+    result = await watcher_agent.close_watch(watch_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail={"message": "Unknown watch_id.", "watch_id": watch_id})
+    return result
 
 
 @app.get("/api/orbital_state")

@@ -1,15 +1,15 @@
-"""O.R.B.I.T. multi-agent fleet (Google ADK).
+﻿"""O.R.B.I.T. multi-agent fleet (Google ADK).
 
 Modules are intentionally separated to enforce single-responsibility agents:
 
-* ``orchestrator`` — FleetCommanderAgent: deterministic mission pipeline,
+* ``orchestrator`` â€” FleetCommanderAgent: deterministic mission pipeline,
   circuit breakers, routing, edge-autonomy fallback. Never calls tools
   directly.
-* ``astro``        — AstrodynamicsAgent: orbital math + TLE tools ONLY.
-* ``diplomat``     — DiplomatAgent: external fleet negotiation tools ONLY.
-* ``safety``       — SafetyOfficerAgent: guardrail with NO tools. The sole
+* ``astro``        â€” AstrodynamicsAgent: orbital math + TLE tools ONLY.
+* ``diplomat``     â€” DiplomatAgent: external fleet negotiation tools ONLY.
+* ``safety``       â€” SafetyOfficerAgent: guardrail with NO tools. The sole
   authority for approving or rejecting manoeuvres on the ground.
-* ``edge_agent``   — Gemma Edge Autopilot: satellite-side loss-of-signal
+* ``edge_agent``   â€” Gemma Edge Autopilot: satellite-side loss-of-signal
   autonomy with EXACTLY ONE tool (emergency_dodge).
 """
 
@@ -23,7 +23,7 @@ from .edge_agent import gemma_edge_agent
 from .orchestrator import fleet_commander_agent
 from .safety import safety_officer_agent
 
-__version__: Final[str] = "0.5.0"
+__version__: Final[str] = "0.6.0"
 
 __all__ = [
     "__version__",

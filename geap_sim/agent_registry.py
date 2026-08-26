@@ -54,8 +54,14 @@ _DEFAULT_MANIFESTS: Final[tuple[AgentManifest, ...]] = (
     AgentManifest(
         agent_name="astrodynamics_specialist",
         version=_FLEET_VERSION,
-        description="Screens conjunctions with SGP4 and recommends delta-v manoeuvres.",
-        allowed_tools=["screen_conjunction", "get_tle_data"],
+        description="Screens conjunctions with SGP4 and recommends delta-v manoeuvres grounded in fleet memory.",
+        allowed_tools=[
+            "screen_conjunction",
+            "get_tle_data",
+            "fetch_real_tle",
+            "fetch_conjunction_screening",
+            "recall_similar_conjunctions",
+        ],
         identity_scope="orbital.analysis",
     ),
     AgentManifest(
@@ -81,6 +87,17 @@ _DEFAULT_MANIFESTS: Final[tuple[AgentManifest, ...]] = (
         ),
         allowed_tools=["emergency_dodge"],
         identity_scope="edge.autonomy",
+    ),
+    AgentManifest(
+        agent_name="watch_commander",
+        version=_FLEET_VERSION,
+        description=(
+            "Long-running conjunction watch supervisor. Persists watch state, "
+            "resumes after crashes and escalates rising risk to the fleet — "
+            "owns no tools; screening is invoked in-process."
+        ),
+        allowed_tools=[],
+        identity_scope="command.watch",
     ),
 )
 

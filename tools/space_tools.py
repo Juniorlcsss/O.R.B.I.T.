@@ -33,6 +33,8 @@ import numpy as np
 from google.adk.tools import FunctionTool
 from sgp4.api import Satrec, SatrecArray, jday
 
+from geap_sim.observability import audit_logger
+
 try:  # gstime lives in different homes across sgp4 builds/versions
     from sgp4.api import gstime
 except ImportError:  # pragma: no cover — pure-Python sgp4 installs
@@ -882,17 +884,245 @@ def get_orbital_snapshot() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Phase 8 — real-data tools with synthetic fallback (AstrodynamicsAgent)
+# ---------------------------------------------------------------------------
+
+
+def _spacetrack_fallback_audit(tool: str, reason: str) -> None:
+    audit_logger.log_event(
+        trace_id="spacetrack",
+        agent_name="tools.space_tools",
+        event_type="SPACETRACK_FALLBACK_SYNTHETIC",
+        payload={"tool": tool, "reason": reason[:200]},
+        status="DEGRADED",
+    )
+
+
+def _run_coroutine_blocking(awaitable: Any) -> Any:
+    """Bridge a coroutine into sync tool context.
+
+    ADK executes sync tools on a worker thread with no running loop, so
+    ``asyncio.run`` is safe there; should a loop somehow be active in this
+    thread, the coroutine is executed on a dedicated one-off thread instead
+    of nesting loops.
+    """
+    import asyncio
+    import concurrent.futures
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(awaitable)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, awaitable).result()
+
+
+def fetch_real_tle(satellite_id: str) -> dict[str, Any]:
+    """Fetch live Two-Line Element data for an object from Space-Track.org.
+
+    Tries Space-Track first (real Space Surveillance Network elements,
+    cached to avoid rate limits) and falls back to the calibrated synthetic
+    catalogue whenever credentials are missing, the network is down or the
+    object has no real counterpart. The response states its provenance via
+    ``source`` so downstream reasoning never confuses the two.
+
+    Args:
+        satellite_id: Catalogue identifier of the object, e.g.
+            "LANCASTER_ORBIT_1", "ISS_ZARYA", or "FENGYUN_1C_DEB".
+
+    Returns:
+        Same schema as get_tle_data plus ``source`` ("space-track/v1" or
+        "simulated_catalogue/v1") and ``fallback_reason`` when degraded.
+    """
+    key = satellite_id.strip().upper()
+    try:
+        from tools.space_track_api import get_shared_space_track_client
+
+        rows = get_shared_space_track_client().fetch_tle(key)
+        if not rows:
+            raise RuntimeError(f"Space-Track returned no element sets for '{key}'.")
+        row = rows[0]
+        return {
+            "status": "ok",
+            "satellite_id": key,
+            "name": row.get("object_name", key),
+            "norad_id": row.get("norad_cat_id"),
+            "tle_line1": row["tle_line1"],
+            "tle_line2": row["tle_line2"],
+            "epoch_utc": row.get("epoch_utc"),
+            "source": "space-track/v1",
+            "simulated": False,
+        }
+    except Exception as exc:  # noqa: BLE001 — any failure degrades gracefully
+        _spacetrack_fallback_audit("fetch_real_tle", f"{type(exc).__name__}: {exc}")
+        result = get_tle_data(satellite_id)
+        if result.get("status") == "ok":
+            result["fallback_reason"] = str(exc)[:200]
+        return result
+
+
+def fetch_conjunction_screening(satellite_id: str) -> dict[str, Any]:
+    """Retrieve real Conjunction Data Messages (CDMs) for one asset.
+
+    Queries Space-Track's conjunction API for recent CDMs involving
+    ``satellite_id`` and normalises them into screening-shaped records
+    (TCA, miss distance, Pc, CARA band). When real data is unavailable the
+    deterministic SGP4 screening stands in, clearly labelled as simulated.
+
+    Args:
+        satellite_id: Catalogue identifier of the protected asset.
+
+    Returns:
+        ``{"status": "ok", "source": "space-track/v1"|"simulated_sgp4/v1",
+           "asset_id", "cdms": [...], "max_risk_band"}`` on success.
+    """
+    key = satellite_id.strip().upper()
+    entry = _CATALOG.get(key)
+    try:
+        if entry is None:
+            return _unknown_object_error(satellite_id)
+        from tools.space_track_api import get_shared_space_track_client
+
+        norad = int(entry.norad_id)
+        cdms = get_shared_space_track_client().fetch_cdms(norad)
+        bands = [str(cdm.get("risk_band")) for cdm in cdms if cdm.get("risk_band")]
+        max_band = "HIGH" if "HIGH" in bands else "MEDIUM" if "MEDIUM" in bands else "LOW" if "LOW" in bands else None
+        return {
+            "status": "ok",
+            "source": "space-track/v1",
+            "asset_id": key,
+            "norad_cat_id": norad,
+            "cdm_count": len(cdms),
+            "cdms": cdms,
+            "max_risk_band": max_band,
+            "simulated": False,
+        }
+    except Exception as exc:  # noqa: BLE001 — degrade to SGP4 screening
+        _spacetrack_fallback_audit("fetch_conjunction_screening", f"{type(exc).__name__}: {exc}")
+
+    # Synthetic stand-in: screen our asset against every catalogued debris
+    # object and report the worst encounter, same shape as the CDM path.
+    if entry is None:
+        return _unknown_object_error(satellite_id)
+    screens: list[dict[str, Any]] = []
+    for other_key, other in sorted(_CATALOG.items()):
+        if other_key == key or other.kind != "debris":
+            continue
+        screened = _screen_pair_cached(key, other_key)
+        if screened:
+            screens.append(screened)
+    screens.sort(key=lambda item: item["probability_of_collision"], reverse=True)
+    worst = screens[0] if screens else None
+    return {
+        "status": "ok",
+        "source": "simulated_sgp4/v1",
+        "asset_id": key,
+        "cdm_count": len(screens),
+        "cdms": [
+            {
+                "cdm_id": f"SIM-{item['sat_id']}-{item['debris_id']}",
+                "tca_iso": item["tca_utc"],
+                "miss_distance_km": item["miss_distance_km"],
+                "pc": item["probability_of_collision"],
+                "risk_band": item["risk_band"],
+                "created_utc": None,
+                "source": "simulated_sgp4/v1",
+            }
+            for item in screens[:10]
+        ],
+        "max_risk_band": worst["risk_band"] if worst else None,
+        "fallback_note": "Synthetic SGP4 screening used; no Space-Track credentials/data available.",
+        "simulated": True,
+    }
+
+
+def recall_similar_conjunctions(
+    risk_band: str,
+    miss_distance_km: float,
+    pc: float,
+    debris_type_hint: str = "",
+    fuel_percent_remaining: float | None = None,
+) -> dict[str, Any]:
+    """Recall similar past conjunctions from the fleet's vector memory.
+
+    Embeds the current situation and returns the most similar historical
+    encounters *with the actions that resolved them*, letting recommendations
+    be grounded in fleet experience instead of starting from scratch.
+
+    Args:
+        risk_band: Current CARA band ("LOW"|"MEDIUM"|"HIGH").
+        miss_distance_km: Current miss-distance estimate in km.
+        pc: Current collision probability estimate.
+        debris_type_hint: Optional catalogue identifier of the secondary.
+        fuel_percent_remaining: Optional current fuel reserve percentage.
+
+    Returns:
+        ``{"status": "ok", "count": N, "matches": [{..., "similarity"}],
+          "summary": "<human-readable precedent line>"}``
+    """
+    try:
+        from geap_sim.memory_bank import build_conjunction_context, get_shared_memory_bank
+
+        context = build_conjunction_context(
+            {
+                "risk_band": risk_band,
+                "miss_distance_km": miss_distance_km,
+                "pc": pc,
+                "debris_id": debris_type_hint,
+                "fuel_percentage": fuel_percent_remaining,
+            }
+        )
+        matches = _run_coroutine_blocking(get_shared_memory_bank().find_similar_conjunctions(context, top_k=5))
+        dv_values = [float(m["our_dv_mps"]) for m in matches if isinstance(m.get("our_dv_mps"), (int, float)) and m["our_dv_mps"] > 0]
+        if matches and dv_values:
+            summary = (
+                f"Based on {len(matches)} similar past conjunctions, the executed delta-v range "
+                f"was {min(dv_values):.1f}-{max(dv_values):.1f} m/s "
+                f"(best similarity {matches[0]['similarity']:.2f})."
+            )
+        elif matches:
+            summary = f"Based on {len(matches)} similar past conjunctions; none required an avoidance burn."
+        else:
+            summary = "No similar past conjunctions on record yet; this encounter will seed fleet memory."
+        return {
+            "status": "ok",
+            "count": len(matches),
+            "query_context": context,
+            "matches": matches,
+            "summary": summary,
+        }
+    except Exception as exc:  # noqa: BLE001 — recall must never break screening
+        audit_logger.log_event(
+            trace_id="memory-bank",
+            agent_name="tools.space_tools",
+            event_type="VECTOR_RECALL_FAILED",
+            payload={"error_type": type(exc).__name__, "error": str(exc)[:200]},
+            status="DEGRADED",
+        )
+        return {"status": "error", "error_code": "VECTOR_MEMORY_UNAVAILABLE", "message": str(exc)[:200], "count": 0}
+
+
+# ---------------------------------------------------------------------------
 # ADK registration — toolkits are consumed strictly per-agent role
 # ---------------------------------------------------------------------------
 
 get_tle_data_tool: Final[FunctionTool] = FunctionTool(func=get_tle_data)
 screen_conjunction_tool: Final[FunctionTool] = FunctionTool(func=screen_conjunction)
 negotiate_dodge_maneuver_tool: Final[FunctionTool] = FunctionTool(func=negotiate_dodge_maneuver)
+fetch_real_tle_tool: Final[FunctionTool] = FunctionTool(func=fetch_real_tle)
+fetch_conjunction_screening_tool: Final[FunctionTool] = FunctionTool(func=fetch_conjunction_screening)
+recall_similar_conjunctions_tool: Final[FunctionTool] = FunctionTool(func=recall_similar_conjunctions)
 
 #: For AstrodynamicsAgent ONLY — pure math, no external side effects.
-ASTRO_TOOLKIT: Final[tuple[FunctionTool, FunctionTool]] = (
+#: (fetch_real_tle/fetch_conjunction_screening touch the network but are
+#: read-only and rate-limit-shielded; recall reads fleet vector memory.)
+ASTRO_TOOLKIT: Final[tuple[FunctionTool, ...]] = (
     get_tle_data_tool,
     screen_conjunction_tool,
+    fetch_real_tle_tool,
+    fetch_conjunction_screening_tool,
+    recall_similar_conjunctions_tool,
 )
 
 #: For DiplomatAgent ONLY — the single sanctioned channel to outside fleets.
@@ -906,8 +1136,11 @@ __all__ = [
     "ASTRO_TOOLKIT",
     "DIPLOMAT_TOOLKIT",
     "MAX_NEGOTIABLE_DELTA_V_MPS",
+    "fetch_conjunction_screening_tool",
+    "fetch_real_tle_tool",
     "get_orbital_snapshot",
     "get_tle_data_tool",
     "negotiate_dodge_maneuver_tool",
+    "recall_similar_conjunctions_tool",
     "screen_conjunction_tool",
 ]

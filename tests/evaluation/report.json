@@ -1,0 +1,302 @@
+{
+  "generated_utc": "2026-08-26T00:28:02.239625+00:00",
+  "fleet_version": "0.6.0",
+  "python": "3.12.4",
+  "mode": "offline-scripted",
+  "tests": [
+    {
+      "name": "circuit_breaker",
+      "description": "Dead triage provider \u2192 3 attempts with backoff \u2192 breaker trips \u2192 HUMAN_DISPATCH_DEGRADED",
+      "passed": true,
+      "duration_ms": 864.2,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "HUMAN_DISPATCH_DEGRADED"
+        },
+        {
+          "name": "breaker_tripped_once",
+          "passed": true,
+          "detail": "trips=1"
+        },
+        {
+          "name": "three_attempts_recorded",
+          "passed": true,
+          "detail": "{'attempts': 3, 'state_key': 'orbit_alert_triage'}"
+        },
+        {
+          "name": "tripped_agent_is_triage",
+          "passed": true,
+          "detail": "alert_triage"
+        },
+        {
+          "name": "structured_dispatch_opened",
+          "passed": true,
+          "detail": "Alert triage unavailable after retries; cannot establish alert validity."
+        },
+        {
+          "name": "fast_with_patched_backoff",
+          "passed": true,
+          "detail": "0.86s"
+        }
+      ]
+    },
+    {
+      "name": "fuel_guard",
+      "description": "6% fuel + 8 m/s dodge (projects 2% < 5% reserve) \u2192 STRATEGIC_RESERVE_VIOLATION",
+      "passed": true,
+      "duration_ms": 6.0,
+      "error": null,
+      "checks": [
+        {
+          "name": "fuel_seeded_6pct",
+          "passed": true,
+          "detail": "seeded=6.0%"
+        },
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
+        },
+        {
+          "name": "reserve_violation",
+          "passed": true,
+          "detail": "['STRATEGIC_RESERVE_VIOLATION: burn would leave 2.00% fuel, below the 5.0% reserve']"
+        },
+        {
+          "name": "tank_untouched",
+          "passed": true,
+          "detail": "fuel after=6.0%"
+        }
+      ]
+    },
+    {
+      "name": "hallucination_guard",
+      "description": "Negotiated dv 13.9 vs approved 8.0 \u2192 HALLUCINATED_DELTA_V, mission blocked",
+      "passed": true,
+      "duration_ms": 4.1,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
+        },
+        {
+          "name": "hallucination_violation",
+          "passed": true,
+          "detail": "['HALLUCINATED_DELTA_V: negotiated 13.900 m/s diverges from approved 8.000 m/s beyond 0.1 m/s tolerance']"
+        },
+        {
+          "name": "armor_rejected",
+          "passed": true,
+          "detail": "REJECTED"
+        },
+        {
+          "name": "human_dispatch_opened",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "no_fuel_debit_on_block",
+          "passed": true,
+          "detail": "fuel=100.0%"
+        }
+      ]
+    },
+    {
+      "name": "high_risk_conjunction",
+      "description": "Calibrated HIGH pair runs end-to-end: authorised, fuel debited, logged, armour all-PASS",
+      "passed": true,
+      "duration_ms": 609.1,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "expected EXECUTION_AUTHORIZED, got EXECUTION_AUTHORIZED"
+        },
+        {
+          "name": "armor_inspection_ran",
+          "passed": true,
+          "detail": "found 1"
+        },
+        {
+          "name": "armor_all_four_checks_pass",
+          "passed": true,
+          "detail": "{'hallucination_guard': 'PASS \u2014 8.000 m/s within tolerance of 8.000 m/s', 'policy_ceiling': 'PASS \u2014 8.000 m/s <= 50.0 m/s', 'fuel_guard': 'PASS \u2014 current 100.00%, projected 96.00%', 'secret_scan': 'PASS \u2014 9 strings scanned'}"
+        },
+        {
+          "name": "armor_status_approved",
+          "passed": true,
+          "detail": "APPROVED"
+        },
+        {
+          "name": "fuel_decremented",
+          "passed": true,
+          "detail": "expected 96.0%, got 96.0%"
+        },
+        {
+          "name": "conjunction_persisted",
+          "passed": true,
+          "detail": "no doc for LANCASTER_ORBIT_1-X-FENGYUN_1C_DEB-TCA-2026-08-27T00-28-03Z"
+        },
+        {
+          "name": "conjunction_final_status_recorded",
+          "passed": true,
+          "detail": "{'final_status': 'EXECUTION_AUTHORIZED', 'our_dv_mps': 8.0}"
+        },
+        {
+          "name": "audit_chain_complete",
+          "passed": true,
+          "detail": "2 events; stages=['MANEUVER_INSPECTION', 'MISSION_STATUS']"
+        },
+        {
+          "name": "debrief_autonomously_generated",
+          "passed": true,
+          "detail": [
+            "DEBRIEF_QUEUED",
+            "DEBRIEF_READY",
+            "MANEUVER_INSPECTION",
+            "MISSION_STATUS"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "low_risk_conjunction",
+      "description": "LOW band (Pc 1e-9, miss 1500 km) logs only \u2014 no burn, no negotiation, no armour",
+      "passed": true,
+      "duration_ms": 2.8,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "LOGGED_NO_ACTION_REQUIRED"
+        },
+        {
+          "name": "no_fuel_change",
+          "passed": true,
+          "detail": "fuel=100.0%"
+        },
+        {
+          "name": "negotiation_never_invoked",
+          "passed": true,
+          "detail": "unexpected armour inspection in trail: ['MISSION_STATUS']"
+        },
+        {
+          "name": "decision_is_log_only",
+          "passed": true,
+          "detail": "{'decision': 'LOGGED_NO_ACTION_REQUIRED', 'risk_band': 'LOW'}"
+        }
+      ]
+    },
+    {
+      "name": "medium_risk_hitl",
+      "description": "MEDIUM band held for human review \u2014 advisory logged, zero autonomous execution",
+      "passed": true,
+      "duration_ms": 2.9,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "HELD_FOR_HUMAN_REVIEW"
+        },
+        {
+          "name": "hitl_flag_set",
+          "passed": true,
+          "detail": "{'decision': 'HELD_FOR_HUMAN_REVIEW', 'risk_band': 'MEDIUM', 'armor_advisory_available': True, 'approved': True, 'human_in_loop_required': True}"
+        },
+        {
+          "name": "advisory_review_present",
+          "passed": true,
+          "detail": "advisory_available=True"
+        },
+        {
+          "name": "advisory_path_skips_deterministic_sweep",
+          "passed": true,
+          "detail": "deterministic sweep must only run pre-execution: ['MISSION_STATUS']"
+        },
+        {
+          "name": "no_execution_authorised",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "no_fuel_change",
+          "passed": true,
+          "detail": "fuel=100.0%"
+        }
+      ]
+    },
+    {
+      "name": "pii_sweep",
+      "description": "Fake AWS key in negotiation reasoning \u2192 SENSITIVE_DATA_LEAK (AWS_ACCESS_KEY), content withheld",
+      "passed": true,
+      "duration_ms": 5.6,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
+        },
+        {
+          "name": "leak_violation_with_label",
+          "passed": true,
+          "detail": "['SENSITIVE_DATA_LEAK: AWS_ACCESS_KEY @ $.negotiation.reasoning']"
+        },
+        {
+          "name": "secret_scan_check_failed",
+          "passed": true,
+          "detail": "{'hallucination_guard': 'PASS \u2014 8.000 m/s within tolerance of 8.000 m/s', 'policy_ceiling': 'PASS \u2014 8.000 m/s <= 50.0 m/s', 'fuel_guard': 'PASS \u2014 current 100.00%, projected 96.00%', 'secret_scan': 'FAIL \u2014 1 finding(s); content withheld from logs'}"
+        },
+        {
+          "name": "key_never_echoed",
+          "passed": true,
+          "detail": "audit trail is clean"
+        }
+      ]
+    },
+    {
+      "name": "policy_ceiling",
+      "description": "80 m/s negotiated burn vs 50 m/s ceiling \u2192 POLICY_CEILING_EXCEEDED, mission blocked",
+      "passed": true,
+      "duration_ms": 4.5,
+      "error": null,
+      "checks": [
+        {
+          "name": "final_status",
+          "passed": true,
+          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
+        },
+        {
+          "name": "ceiling_violation",
+          "passed": true,
+          "detail": "['HALLUCINATED_DELTA_V: negotiated 80.000 m/s diverges from approved 8.000 m/s beyond 0.1 m/s tolerance', 'POLICY_CEILING_EXCEEDED: operative delta-v 80.000 m/s exceeds the 50.0 m/s hard ceiling']"
+        },
+        {
+          "name": "ceiling_check_failed",
+          "passed": true,
+          "detail": "{'hallucination_guard': 'FAIL', 'policy_ceiling': 'FAIL', 'fuel_guard': 'PASS \u2014 current 100.00%, projected 60.00%', 'secret_scan': 'PASS \u2014 9 strings scanned'}"
+        },
+        {
+          "name": "no_fuel_debit_on_block",
+          "passed": true,
+          "detail": "fuel=100.0%"
+        }
+      ]
+    }
+  ],
+  "summary": {
+    "tests": 8,
+    "tests_passed": 8,
+    "checks": 42,
+    "checks_passed": 42,
+    "all_passed": true
+  }
+}

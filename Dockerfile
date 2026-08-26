@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir -r requirements.txt
 
 # Application code.
+# NOTE: this ships everything, including tests/ — intentional, so judges can
+# run the evaluation suite inside the container:
+#   python tests/evaluation/run_evaluation.py
 COPY . .
 
 # Run as an unprivileged user (Cloud Run best practice).
