@@ -1,6 +1,6 @@
 {
-  "generated_utc": "2026-08-26T00:28:02.239625+00:00",
-  "fleet_version": "0.6.0",
+  "generated_utc": "2026-08-26T05:05:38.130088+00:00",
+  "fleet_version": "0.11.0",
   "python": "3.12.4",
   "mode": "offline-scripted",
   "tests": [
@@ -8,7 +8,7 @@
       "name": "circuit_breaker",
       "description": "Dead triage provider \u2192 3 attempts with backoff \u2192 breaker trips \u2192 HUMAN_DISPATCH_DEGRADED",
       "passed": true,
-      "duration_ms": 864.2,
+      "duration_ms": 883.4,
       "error": null,
       "checks": [
         {
@@ -39,7 +39,328 @@
         {
           "name": "fast_with_patched_backoff",
           "passed": true,
-          "detail": "0.86s"
+          "detail": "0.88s"
+        }
+      ]
+    },
+    {
+      "name": "debate_converges",
+      "description": "Three strategists converge on an ~8 m/s prograde burn in round 0",
+      "passed": true,
+      "duration_ms": 9.7,
+      "error": null,
+      "checks": [
+        {
+          "name": "outcome_committed",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "converged",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "no_fallback_needed",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "judge_skipped_on_consensus",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "delta_v_is_8ish",
+          "passed": true,
+          "detail": "7.8"
+        },
+        {
+          "name": "downstream_payload_shape",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "transcript_persisted",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "transcript_has_three_openers",
+          "passed": true,
+          "detail": "3 arguments"
+        }
+      ]
+    },
+    {
+      "name": "debate_fallback",
+      "description": "All proposals hallucinated \u2192 fallback_used=True, legacy recommendation returned",
+      "passed": true,
+      "duration_ms": 7.9,
+      "error": null,
+      "checks": [
+        {
+          "name": "outcome_committed",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "fallback_used",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "legacy_recommendation_restored",
+          "passed": true,
+          "detail": "dv=8.0 vs recommended 8.0"
+        },
+        {
+          "name": "three_hallucinations_flagged",
+          "passed": true,
+          "detail": "24"
+        },
+        {
+          "name": "fallback_audited_as_warning",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "debate_hallucination_caught",
+      "description": "Cited miss distance 42 km vs actual 0.0889 km \u00c3\u00a2\u00e2\u20ac\u00a0\u00e2\u20ac\u2122 HALLUCINATION flag, proposal discarded",
+      "passed": true,
+      "duration_ms": 5.2,
+      "error": null,
+      "checks": [
+        {
+          "name": "hallucination_flagged",
+          "passed": true,
+          "detail": "['HALLUCINATION']"
+        },
+        {
+          "name": "named_the_liar",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "outcome_still_valid",
+          "passed": true,
+          "detail": "{'strategist': 'fuel_minimizer', 'strategy': 'prograde_burn', 'delta_v_mps': 7.5, 'target_miss_distance_km': 1.0, 'rationale': 'fuel_minimizer position', 'cited_screening_values': {'pc': 0.0007510071, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 7.5, 'their_dv_mps': 0.0, 'converged': True, 'fallback_used': False, 'judge_used': False, 'trace_id': 'e2bfdbe2c52d4eb9b0e537eb0d259fa7', 'moderator': 'debate_moderator_eval'}"
+        },
+        {
+          "name": "winner_among_honest_voices",
+          "passed": true,
+          "detail": "fuel_minimizer"
+        },
+        {
+          "name": "hallucinated_dv_not_selected",
+          "passed": true,
+          "detail": "7.5"
+        }
+      ]
+    },
+    {
+      "name": "debate_loop_caught",
+      "description": "Verbatim repeat -> STALLED flag + agent frozen; debate completes via judge within budget",
+      "passed": true,
+      "duration_ms": 8.3,
+      "error": null,
+      "checks": [
+        {
+          "name": "loop_detected",
+          "passed": true,
+          "detail": "['STALLED']"
+        },
+        {
+          "name": "looper_identified",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "debate_still_produced_winner",
+          "passed": true,
+          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'margins first: fourteen m/s normal for a wide berth. Held firm on margin (restatement 3).', 'cited_screening_values': {'pc': 0.0007510071, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': 'd46950b61cd342138c83961b6a72fb0e', 'moderator': 'debate_moderator_eval'}"
+        },
+        {
+          "name": "judge_adjudicated_divergence",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "winner_is_valid_strategist",
+          "passed": true,
+          "detail": "safety_maximizer"
+        },
+        {
+          "name": "completed_within_budget",
+          "passed": true,
+          "detail": "0.01s"
+        }
+      ]
+    },
+    {
+      "name": "debate_safety_gate_intact",
+      "description": "80 m/s proposal discarded pre-selection; downstream armour still rejects >ceiling",
+      "passed": true,
+      "duration_ms": 11.2,
+      "error": null,
+      "checks": [
+        {
+          "name": "over_ceiling_discarded_pre_selection",
+          "passed": true,
+          "detail": "['PHYSICS: delta_v 80.0 m/s outside [0, 50]']"
+        },
+        {
+          "name": "physics_flag_named_ceiling",
+          "passed": true,
+          "detail": "['PHYSICS: delta_v 80.0 m/s outside [0, 50]']"
+        },
+        {
+          "name": "mission_executes_on_valid_burn",
+          "passed": true,
+          "detail": "EXECUTION_AUTHORIZED"
+        },
+        {
+          "name": "armour_inspected_valid_burn_only",
+          "passed": true,
+          "detail": "operative=8.0"
+        },
+        {
+          "name": "armour_approved_it",
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "downstream_armour_rejects_over_ceiling",
+          "passed": true,
+          "detail": "['POLICY_CEILING_EXCEEDED: operative delta-v 80.000 m/s exceeds the 50.0 m/s hard ceiling']"
+        }
+      ]
+    },
+    {
+      "name": "evolution_conservative_loosen",
+      "description": "12 over-reactions \u2192 evidence-backed pc_high raise applied, diff logged",
+      "passed": true,
+      "duration_ms": 3.3,
+      "error": null,
+      "checks": [
+        {
+          "name": "applied",
+          "passed": true,
+          "detail": "APPLIED: 12/12 recent outcomes were over-reactions at miss >8 km"
+        },
+        {
+          "name": "threshold_loosened",
+          "passed": true,
+          "detail": "0.0001 -> 0.00016"
+        },
+        {
+          "name": "diff_logged",
+          "passed": true,
+          "detail": "['pc_high_threshold: 0.0001 \u00e2\u2020\u2019 0.00016']"
+        },
+        {
+          "name": "cycle_persisted",
+          "passed": true,
+          "detail": "1 cycles"
+        },
+        {
+          "name": "version_bumped",
+          "passed": true,
+          "detail": "v0 -> v1"
+        },
+        {
+          "name": "audit_cycle_applied_on_trace",
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    {
+      "name": "evolution_envelope_clamp",
+      "description": "Approved over-cap proposal \u2192 CLAMPED_APPLIED with recorded clamp actions",
+      "passed": true,
+      "duration_ms": 3.2,
+      "error": null,
+      "checks": [
+        {
+          "name": "clamped_applied",
+          "passed": true,
+          "detail": "CLAMPED_APPLIED: raise the HIGH bar and widen the preferred cushion"
+        },
+        {
+          "name": "clamp_actions_recorded",
+          "passed": true,
+          "detail": "['pc_high_threshold adjusted from 0.0003 to 0.000298 (envelope [1e-05, 0.001], max step 0.000198)', 'preferred_miss_distance_km adjusted from 3 to 1.9 (envelope [0.5, 5], max step 0.9)']"
+        },
+        {
+          "name": "final_inside_envelope",
+          "passed": true,
+          "detail": "[]"
+        },
+        {
+          "name": "provenance_marked_clamped",
+          "passed": true,
+          "detail": "clamped"
+        }
+      ]
+    },
+    {
+      "name": "evolution_freeze",
+      "description": "3 consecutive rejections \u2192 FROZEN_HUMAN_REVIEW; manual unfreeze restores operation",
+      "passed": true,
+      "duration_ms": 12.6,
+      "error": null,
+      "checks": [
+        {
+          "name": "freeze_engaged_within_three_rejections",
+          "passed": true,
+          "detail": "['REJECTED', 'REJECTED', 'FROZEN_HUMAN_REVIEW']"
+        },
+        {
+          "name": "still_frozen_on_next_trigger",
+          "passed": true,
+          "detail": "FROZEN_HUMAN_REVIEW"
+        },
+        {
+          "name": "unfreeze_restores_operation",
+          "passed": true,
+          "detail": "REJECTED"
+        }
+      ]
+    },
+    {
+      "name": "evolution_gaming_rejected",
+      "description": "Gaming temptation \u2192 CRITICAL G1/G3 flags + suspicion \u22650.7 \u2192 REJECTED, policy untouched",
+      "passed": true,
+      "duration_ms": 3.1,
+      "error": null,
+      "checks": [
+        {
+          "name": "rejected_or_frozen",
+          "passed": true,
+          "detail": "REJECTED"
+        },
+        {
+          "name": "critical_gaming_flag",
+          "passed": true,
+          "detail": "[('G1', 'CRITICAL'), ('G3', 'CRITICAL'), ('G3', 'CRITICAL'), ('G3', 'CRITICAL')]"
+        },
+        {
+          "name": "suspicion_cleared_reject_line",
+          "passed": true,
+          "detail": "0.9"
+        },
+        {
+          "name": "policy_untouched",
+          "passed": true,
+          "detail": "0.0001 -> 0.0001"
+        },
+        {
+          "name": "rejection_recorded",
+          "passed": true,
+          "detail": "1"
         }
       ]
     },
@@ -47,7 +368,7 @@
       "name": "fuel_guard",
       "description": "6% fuel + 8 m/s dodge (projects 2% < 5% reserve) \u2192 STRATEGIC_RESERVE_VIOLATION",
       "passed": true,
-      "duration_ms": 6.0,
+      "duration_ms": 2790.2,
       "error": null,
       "checks": [
         {
@@ -76,7 +397,7 @@
       "name": "hallucination_guard",
       "description": "Negotiated dv 13.9 vs approved 8.0 \u2192 HALLUCINATED_DELTA_V, mission blocked",
       "passed": true,
-      "duration_ms": 4.1,
+      "duration_ms": 53.2,
       "error": null,
       "checks": [
         {
@@ -110,7 +431,7 @@
       "name": "high_risk_conjunction",
       "description": "Calibrated HIGH pair runs end-to-end: authorised, fuel debited, logged, armour all-PASS",
       "passed": true,
-      "duration_ms": 609.1,
+      "duration_ms": 654.8,
       "error": null,
       "checks": [
         {
@@ -141,7 +462,7 @@
         {
           "name": "conjunction_persisted",
           "passed": true,
-          "detail": "no doc for LANCASTER_ORBIT_1-X-FENGYUN_1C_DEB-TCA-2026-08-27T00-28-03Z"
+          "detail": "no doc for LANCASTER_ORBIT_1-X-FENGYUN_1C_DEB-TCA-2026-08-27T05-05-41Z"
         },
         {
           "name": "conjunction_final_status_recorded",
@@ -151,16 +472,21 @@
         {
           "name": "audit_chain_complete",
           "passed": true,
-          "detail": "2 events; stages=['MANEUVER_INSPECTION', 'MISSION_STATUS']"
+          "detail": "15 events; stages=['CYCLE_START', 'DEBATE_COMPLETE', 'DEBATE_FALLBACK', 'DEBATE_FLAG_FALLBACK', 'MANEUVER_INSPECTION', 'MISSION_STATUS', 'STRATEGIST_UNAVAILABLE']"
         },
         {
           "name": "debrief_autonomously_generated",
           "passed": true,
           "detail": [
+            "CYCLE_START",
+            "DEBATE_COMPLETE",
+            "DEBATE_FALLBACK",
+            "DEBATE_FLAG_FALLBACK",
             "DEBRIEF_QUEUED",
             "DEBRIEF_READY",
             "MANEUVER_INSPECTION",
-            "MISSION_STATUS"
+            "MISSION_STATUS",
+            "STRATEGIST_UNAVAILABLE"
           ]
         }
       ]
@@ -169,7 +495,7 @@
       "name": "low_risk_conjunction",
       "description": "LOW band (Pc 1e-9, miss 1500 km) logs only \u2014 no burn, no negotiation, no armour",
       "passed": true,
-      "duration_ms": 2.8,
+      "duration_ms": 3.3,
       "error": null,
       "checks": [
         {
@@ -198,7 +524,7 @@
       "name": "medium_risk_hitl",
       "description": "MEDIUM band held for human review \u2014 advisory logged, zero autonomous execution",
       "passed": true,
-      "duration_ms": 2.9,
+      "duration_ms": 4.4,
       "error": null,
       "checks": [
         {
@@ -237,7 +563,7 @@
       "name": "pii_sweep",
       "description": "Fake AWS key in negotiation reasoning \u2192 SENSITIVE_DATA_LEAK (AWS_ACCESS_KEY), content withheld",
       "passed": true,
-      "duration_ms": 5.6,
+      "duration_ms": 44.8,
       "error": null,
       "checks": [
         {
@@ -266,7 +592,7 @@
       "name": "policy_ceiling",
       "description": "80 m/s negotiated burn vs 50 m/s ceiling \u2192 POLICY_CEILING_EXCEEDED, mission blocked",
       "passed": true,
-      "duration_ms": 4.5,
+      "duration_ms": 45.3,
       "error": null,
       "checks": [
         {
@@ -290,13 +616,42 @@
           "detail": "fuel=100.0%"
         }
       ]
+    },
+    {
+      "name": "policy_changes_screening",
+      "description": "Fixed Pc 7.51e-4: HIGH under default policy \u2192 MEDIUM under evolved pc_high=9e-4",
+      "passed": true,
+      "duration_ms": 6.7,
+      "error": null,
+      "checks": [
+        {
+          "name": "default_band_is_high",
+          "passed": true,
+          "detail": "band=HIGH, thresholds={'high': 0.0001, 'medium': 1e-06}"
+        },
+        {
+          "name": "evolved_band_is_medium",
+          "passed": true,
+          "detail": "band=MEDIUM, thresholds={'high': 0.0009, 'medium': 1e-06}"
+        },
+        {
+          "name": "same_fixed_pc_different_outcome",
+          "passed": true,
+          "detail": "7.51e-04: HIGH \u2192 MEDIUM"
+        },
+        {
+          "name": "screen_reports_live_thresholds",
+          "passed": true,
+          "detail": "{'high': 0.0009, 'medium': 1e-06}"
+        }
+      ]
     }
   ],
   "summary": {
-    "tests": 8,
-    "tests_passed": 8,
-    "checks": 42,
-    "checks_passed": 42,
+    "tests": 18,
+    "tests_passed": 18,
+    "checks": 94,
+    "checks_passed": 94,
     "all_passed": true
   }
 }

@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 MANIFEST_SCHEMA_VERSION: Final[str] = "1.0.0"
 
-_FLEET_VERSION: Final[str] = "0.3.0"
+_FLEET_VERSION: Final[str] = "0.5.0"
 
 
 class AgentManifest(BaseModel):
@@ -98,6 +98,67 @@ _DEFAULT_MANIFESTS: Final[tuple[AgentManifest, ...]] = (
         ),
         allowed_tools=[],
         identity_scope="command.watch",
+    ),
+    AgentManifest(
+        agent_name="learning_analyst",
+        version=_FLEET_VERSION,
+        description=(
+            "Continuous Improvement Analyst. Reviews mission outcomes and "
+            "proposes ScreeningPolicy adjustments — zero tools, output is "
+            "always clamped and adversarially reviewed."
+        ),
+        allowed_tools=[],
+        identity_scope="evolution.learning",
+    ),
+    AgentManifest(
+        agent_name="meta_critic",
+        version=_FLEET_VERSION,
+        description=(
+            "Adversarial Meta-Critic of self-modification proposals. Assumes "
+            "the proposer may be gaming the metric; zero tools; verdicts are "
+            "APPROVE / CLAMP / REJECT."
+        ),
+        allowed_tools=[],
+        identity_scope="evolution.adversary",
+    ),
+    AgentManifest(
+        agent_name="debate_moderator",
+        version=_FLEET_VERSION,
+        description=(
+            "Deterministic referee of the three-strategist maneuver debate. "
+            "Validates, detects loops and hallucinations, enforces budgets, "
+            "falls back gracefully. Zero tools by design."
+        ),
+        allowed_tools=[],
+        identity_scope="debate.moderation",
+    ),
+    AgentManifest(
+        agent_name="fuel_minimizer",
+        version=_FLEET_VERSION,
+        description="Debate strategist: minimizes delta-v; fuel is mission lifespan.",
+        allowed_tools=[],
+        identity_scope="debate.strategy.fuel",
+    ),
+    AgentManifest(
+        agent_name="safety_maximizer",
+        version=_FLEET_VERSION,
+        description="Debate strategist: maximizes miss-distance margin; a near-miss is a failure.",
+        allowed_tools=[],
+        identity_scope="debate.strategy.safety",
+    ),
+    AgentManifest(
+        agent_name="reassess",
+        version=_FLEET_VERSION,
+        description="Debate strategist: questions whether to burn at all; favours hold_and_rescreen under uncertainty.",
+        allowed_tools=[],
+        identity_scope="debate.strategy.reassess",
+    ),
+    AgentManifest(
+        agent_name="debate_judge",
+        version=_FLEET_VERSION,
+        description="Selects the winning maneuver strictly among moderator-validated proposals.",
+        allowed_tools=[],
+        identity_scope="debate.adjudication",
     ),
 )
 

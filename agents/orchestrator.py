@@ -69,6 +69,8 @@ from geap_sim.memory_bank import MemoryBank, estimate_fuel_after_burn, get_share
 from geap_sim.model_armor import ModelArmor, get_shared_model_armor
 from geap_sim.observability import audit_logger
 
+from debate.moderator import DEBATE_OUTCOME_STATE_KEY, debate_moderator_agent
+
 from .astro import astrodynamics_agent
 from .diplomat import diplomat_agent
 from .edge_agent import (
@@ -316,6 +318,8 @@ class FleetCommanderPipeline(BaseAgent):
     edge_autopilot: LlmAgent
     #: Long-running conjunction watch supervisor (Phase 8).
     watch_commander: BaseAgent
+    #: Three-strategist maneuver debate referee (Phase 11, HIGH-risk only).
+    debate_moderator: BaseAgent
 
     #: GEAP MemoryBank — persistent satellite state & conjunction history.
     mission_memory: MemoryBank | None = None
@@ -343,7 +347,13 @@ class FleetCommanderPipeline(BaseAgent):
             self.model_armor_checkpoint.name,
             self.edge_autopilot.name,
             self.watch_commander.name,
+            self.debate_moderator.name,
         )
+
+    @staticmethod
+    def _debate_enabled() -> bool:
+        """Debate upgrades HIGH-risk proposals; kill-switch for A/B demos."""
+        return os.environ.get("ORBIT_ENABLE_DEBATE", "true").strip().lower() not in ("0", "false", "no", "off")
 
     def mission_memory_for_execution(self) -> MemoryBank:
         """Resolve the MemoryBank used for post-approval state persistence."""
@@ -792,8 +802,48 @@ class FleetCommanderPipeline(BaseAgent):
             return
 
         # ---- HIGH-risk path --------------------------------------------------
-        yield self._status_event("HIGH RISK confirmed. Engaging negotiation officer…")
+        yield self._status_event("HIGH RISK confirmed. Convening the strategist debate…")
         yield self._dossier_event(dossier)
+
+        # ---- Phase 11: three-strategist debate upgrades the proposal stage ---
+        # The moderator is deterministic and fail-safe: it always commits a
+        # valid outcome (its own fallback if the debate collapses), so a
+        # debate failure can never break the mission. Downstream gates are
+        # unchanged — negotiation → SafetyOfficer → ModelArmor still run.
+        debate_payload: dict[str, Any] | None = None
+        if self._debate_enabled():
+            try:
+                ctx.session.state["orbit_debate_sat_id"] = str(dossier.get("sat_id", ""))
+                ctx.session.state["orbit_debate_debris_id"] = str(dossier.get("debris_id", ""))
+                async for event in self.debate_moderator.run_async(ctx):
+                    yield event
+                debate_payload = _extract_json(ctx.session.state.get(DEBATE_OUTCOME_STATE_KEY, "")) or None
+            except Exception as exc:  # noqa: BLE001 — belt-and-braces around a fail-safe component
+                audit_logger.log_event(
+                    trace_id=trace_id, agent_name="debate_moderator",
+                    event_type="DEBATE_PIPELINE_FAILED",
+                    payload={"error_type": type(exc).__name__, "error": str(exc)[:200]},
+                    status="DEGRADED",
+                )
+            if debate_payload:
+                dossier["debate_summary"] = {
+                    "winner": debate_payload.get("strategist"),
+                    "strategy": debate_payload.get("strategy"),
+                    "delta_v_mps": debate_payload.get("delta_v_mps"),
+                    "converged": debate_payload.get("converged"),
+                    "fallback_used": debate_payload.get("fallback_used", False),
+                    "judge_used": debate_payload.get("judge_used", False),
+                    "transcript_trace_id": debate_payload.get("trace_id"),
+                }
+                ctx.session.state[STATE_MISSION_DOSSIER] = dossier
+                yield self._dossier_event({**dossier, "negotiated_action": {
+                    "action": "we_dodge" if debate_payload.get("strategy") != "hold_and_rescreen" else "hold_and_rescreen",
+                    "our_dv_mps": debate_payload.get("our_dv_mps"),
+                    "their_dv_mps": 0.0,
+                }})
+            else:
+                yield self._status_event("Debate unavailable — continuing with the classic single-specialist path.")
+
         async for event in self._guarded_invoke(ctx, agent=self.negotiation_officer, state_key=NEGOTIATION_OUTPUT_KEY, validator=_validate_negotiation):
             yield event
         if not ctx.session.state.get(f"{NEGOTIATION_OUTPUT_KEY}:ok"):
@@ -1037,11 +1087,12 @@ fleet_commander_agent = FleetCommanderPipeline(
     model_armor_checkpoint=safety_officer_agent,
     edge_autopilot=gemma_edge_agent,
     watch_commander=watcher_agent,
+    debate_moderator=debate_moderator_agent,
     mission_memory=get_shared_memory_bank(),
     armor_inspector=get_shared_model_armor(),
     # Registered as formal sub-agents so ADK tooling (tree walkers, `adk
     # web`, agent discovery) sees the full fleet hierarchy — including the
-    # satellite-side Gemma autopilot and the watch supervisor.
+    # satellite-side autopilot, watch supervisor and the debate panel.
     sub_agents=[
         alert_triage_agent,
         astrodynamics_agent,
@@ -1049,6 +1100,7 @@ fleet_commander_agent = FleetCommanderPipeline(
         safety_officer_agent,
         gemma_edge_agent,
         watcher_agent,
+        debate_moderator_agent,
     ],
 )
 
@@ -1084,6 +1136,11 @@ def _attest_tool_scopes() -> None:
         ("gemma_edge_autopilot", "get_tle_data"),
         ("watch_commander", "screen_conjunction"),
         ("watch_commander", "recall_similar_conjunctions"),
+        ("debate_moderator", "screen_conjunction"),
+        ("fuel_minimizer", "screen_conjunction"),
+        ("safety_maximizer", "get_tle_data"),
+        ("reassess", "negotiate_dodge_maneuver"),
+        ("debate_judge", "screen_conjunction"),
         ("unregistered_intruder", "screen_conjunction"),
     )
     for agent_name, tool_name in negative_controls:

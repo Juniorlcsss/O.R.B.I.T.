@@ -17,6 +17,12 @@ Exposes the FleetCommanderPipeline to the world:
 * ``GET  /api/watches/{watch_id}``       — one watch document.
 * ``POST /api/watches/{watch_id}/approval`` — human gate on escalation.
 * ``POST /api/watches/{watch_id}/close`` — manually close a watch.
+* ``POST /api/evolution/trigger``  — run one self-evolution cycle (seedable).
+* ``GET  /api/evolution/policy``   — active ScreeningPolicy + its envelope.
+* ``GET  /api/evolution/history``  — before/after cycle audit trail.
+* ``GET  /api/evolution/status``   — freeze state and failure counters.
+* ``POST /api/evolution/unfreeze`` — manual human reset after a freeze.
+* ``GET  /api/debate/transcript/{trace_id}`` — full strategist-debate transcript.
 
 Security: every ``/api/*`` route requires an ``X-API-Key`` header matching
 the ``ORBIT_API_KEY`` environment variable (constant-time comparison).
@@ -60,6 +66,11 @@ from agents.orchestrator import (
     fleet_commander_agent,
 )
 from agents.watcher import watcher_agent
+from evolution.engine import STATE_REPORT_KEY as EVOLUTION_REPORT_KEY, EvolutionEngine
+from evolution.learning_analyst import learning_analyst_agent
+from evolution.meta_critic import meta_critic_agent
+from evolution.outcome import OutcomeSimulator
+from evolution.policy import EVOLUTION_ENVELOPE, get_shared_policy_store
 from geap_sim.agent_registry import get_shared_registry
 from geap_sim.memory_bank import get_shared_memory_bank
 from geap_sim.model_armor import STATUS_APPROVED
@@ -79,6 +90,22 @@ _API_KEY: Final[str] = os.getenv("ORBIT_API_KEY", "").strip()
 memory_bank = get_shared_memory_bank()
 session_service = InMemorySessionService()
 runner = Runner(agent=fleet_commander_agent, app_name=APP_NAME, session_service=session_service)
+
+# Self-evolution subsystem (Phase 10): production engine with the real
+# analyst + adversarial Meta-Critic; evaluation tests inject scripted twins.
+evolution_engine = EvolutionEngine(
+    name="evolution_engine",
+    description=(
+        "Self-evolution control plane. Reviews mission outcomes, proposes "
+        "ScreeningPolicy adjustments, gates them behind deterministic gaming "
+        "heuristics and an adversarial Meta-Critic, clamps every candidate "
+        "into the hard safety envelope and freezes itself when it misbehaves."
+    ),
+    learning_analyst=learning_analyst_agent,
+    meta_critic=meta_critic_agent,
+    # Formal sub-agents so /api/agent_tree shows the full evolution hierarchy.
+    sub_agents=[learning_analyst_agent, meta_critic_agent],
+)
 
 if not _API_KEY:
     audit_logger.log_event(
@@ -267,6 +294,16 @@ class WatchApprovalRequest(BaseModel):
     approved: bool = True
 
 
+class EvolutionTriggerRequest(BaseModel):
+    """Command to run one self-evolution cycle (optionally seeded)."""
+
+    trigger_source: Literal["manual", "post_mission"] = "manual"
+    seed: Optional[Literal["over_reactions", "under_reactions", "gaming_temptation"]] = Field(
+        default=None,
+        description="Inject a synthetic, clearly-marked outcome batch before the cycle.",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -385,8 +422,27 @@ async def health() -> dict[str, Any]:
 
 @app.get("/api/agent_tree")
 async def agent_tree() -> dict[str, Any]:
-    """Return the live ADK fleet hierarchy — the architecture, provable."""
-    return {"fleet_version": FLEET_VERSION, "root": _describe_agent(fleet_commander_agent)}
+    """Return the live ADK hierarchy — mission fleet AND evolution engine.
+
+    ``root`` keeps the FleetCommanderPipeline tree (existing consumers);
+    ``evolution_root`` adds the self-evolution subsystem and ``orbit_fleet``
+    nests both under a single demo-friendly root.
+    """
+    fleet_root = _describe_agent(fleet_commander_agent)
+    evolution_root = _describe_agent(evolution_engine)
+    return {
+        "fleet_version": FLEET_VERSION,
+        "root": fleet_root,
+        "evolution_root": evolution_root,
+        "orbit_fleet": {
+            "name": "orbit_fleet",
+            "type": "SystemRoot",
+            "model": None,
+            "tools": [],
+            "temperature": None,
+            "children": [fleet_root, evolution_root],
+        },
+    }
 
 
 @app.get("/api/satellite_state/{sat_id}")
@@ -528,6 +584,119 @@ async def close_watch(watch_id: str) -> dict[str, Any]:
     if result is None:
         raise HTTPException(status_code=404, detail={"message": "Unknown watch_id.", "watch_id": watch_id})
     return result
+
+
+# ---------------------------------------------------------------------------
+# Self-evolution endpoints (Phase 10)
+# ---------------------------------------------------------------------------
+
+_SEED_BATCH_SIZE: Final[int] = 12
+
+
+@app.post("/api/evolution/trigger")
+async def trigger_evolution(payload: EvolutionTriggerRequest) -> dict[str, Any]:
+    """Run one self-evolution cycle through the real ADK Runner.
+
+    With a ``seed``, the matching synthetic outcome batch (clearly marked
+    ``synthetic=True``) is injected first — this is the demo lever for
+    showing the learning loop, the gaming detector and the freeze breaker.
+    The engine is fail-closed at every stage; the returned EvolutionReport
+    states exactly what happened and why.
+    """
+    seeded = 0
+    if payload.seed:
+        simulator = OutcomeSimulator(bank=memory_bank)
+        batches = {
+            "over_reactions": simulator.seed_over_reactions,
+            "under_reactions": simulator.seed_under_reactions,
+            "gaming_temptation": simulator.seed_gaming_temptation,
+        }
+        outcomes = await batches[payload.seed](_SEED_BATCH_SIZE)
+        seeded = len(outcomes)
+
+    session = await session_service.create_session(app_name=APP_NAME, user_id="evolution-api", state={})
+    message = genai_types.Content(
+        role="user",
+        parts=[genai_types.Part(text=json.dumps({"trigger_source": payload.trigger_source, "seed": payload.seed}))],
+    )
+    async for _ in Runner(agent=evolution_engine, app_name=APP_NAME, session_service=session_service).run_async(
+        user_id=session.user_id, session_id=session.id, new_message=message
+    ):
+        pass
+
+    final_session = await session_service.get_session(app_name=APP_NAME, user_id=session.user_id, session_id=session.id)
+    raw_report = (final_session.state if final_session else {}).get(EVOLUTION_REPORT_KEY, "")
+    try:
+        report = json.loads(raw_report) if raw_report else {"status": "ENGINE_ERROR", "reasoning": "no report committed"}
+    except json.JSONDecodeError:
+        report = {"status": "ENGINE_ERROR", "reasoning": "unparsable report"}
+    report["seeded_outcomes"] = seeded
+    report["trigger_source"] = payload.trigger_source
+    return report
+
+
+@app.get("/api/evolution/policy")
+async def evolution_policy() -> dict[str, Any]:
+    """The active ScreeningPolicy plus the envelope it can never escape."""
+    policy = await get_shared_policy_store().load()
+    return {
+        "policy": policy.model_dump(),
+        "envelope": {name: list(bounds) for name, bounds in EVOLUTION_ENVELOPE.items()},
+        "max_step_fraction": 0.20,
+    }
+
+
+@app.get("/api/evolution/history")
+async def evolution_history(limit: int = Query(default=10, ge=1, le=50)) -> dict[str, Any]:
+    """Before/after audit trail of recent evolution cycles (newest first)."""
+    cycles = await memory_bank.get_evolution_history(limit=limit)
+    return {"count": len(cycles), "cycles": cycles}
+
+
+@app.get("/api/evolution/status")
+async def evolution_status() -> dict[str, Any]:
+    """Freeze state, rejection counter and last cycle trace."""
+    return {
+        "frozen": bool(await memory_bank.get_meta("evolution_frozen", False)),
+        "rejection_counter": int(await memory_bank.get_meta("evolution_rejection_counter", 0) or 0),
+        "envelope_push_counter": int(await memory_bank.get_meta("evolution_envelope_push_counter", 0) or 0),
+        "last_trace_id": await memory_bank.get_meta("evolution_last_trace_id", ""),
+    }
+
+
+@app.post("/api/evolution/unfreeze")
+async def unfreeze_evolution() -> dict[str, Any]:
+    """Manual human action: clear the freeze and reset failure counters."""
+    await memory_bank.set_meta("evolution_frozen", False)
+    await memory_bank.set_meta("evolution_rejection_counter", 0)
+    await memory_bank.set_meta("evolution_envelope_push_counter", 0)
+    audit_logger.log_event(
+        trace_id="evolution",
+        agent_name="orbit.api",
+        event_type="EVOLUTION_UNFROZEN_MANUAL",
+        payload={"by": "human_operator"},
+        status="OK",
+    )
+    return {"frozen": False, "rejection_counter": 0, "envelope_push_counter": 0}
+
+
+@app.get("/api/debate/transcript/{trace_id}")
+async def debate_transcript(trace_id: str) -> dict[str, Any]:
+    """Full transcript of one strategist debate (rounds, flags, winner).
+
+    Persisted by the DebateModerator under the mission trace ID; includes
+    every argument hash, hallucination/loop/budget flags, judge decisions
+    and the final validated proposal.
+    """
+    from debate.moderator import DEBATE_TRANSCRIPTS_COLLECTION
+
+    doc = await memory_bank.get_doc(DEBATE_TRANSCRIPTS_COLLECTION, trace_id)
+    if doc is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"message": "No debate transcript for this trace_id.", "trace_id": trace_id},
+        )
+    return doc
 
 
 @app.get("/api/orbital_state")

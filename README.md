@@ -62,6 +62,15 @@ conjunction-response pipeline:
 | Autonomous Veo debrief | terminal mission → debrief `READY` attached to the conjunction record; simulated reconstruction renders fully offline, honest about its mode |
 | Lyria event cues | all 5 cue types served as valid 22.05 kHz mono WAV from `/api/audio/{event_type}` (0.32 s–1.70 s, 14–75 kB), memoised after first render; unknown types rejected with the available list |
 | Vector recall | HIGH-context queries rank historical HIGH encounters first (cosine 0.74 vs 0.39); recall tool returns *"Based on 3 similar past conjunctions, the executed delta-v range was 9.5–9.5 m/s"* |
+| Self-evolution applied | seeded over-reactions → analyst proposal → APPROVE → clamp clean → `CYCLE_APPLIED`; policy version bumped, diff logged, next screening uses evolved thresholds |
+| Gaming caught | gaming-temptation batch + wild proposal → CRITICAL G1/G3 flags, suspicion ≥0.7 → REJECTED, active policy byte-identical |
+| Envelope clamp | approved out-of-cap proposal → `CLAMPED_APPLIED` with recorded clamp actions; invariants empty; provenance=`clamped` |
+| Freeze breaker | repeated rejections → `FROZEN_HUMAN_REVIEW`, further triggers blocked, manual unfreeze restores operation |
+| Debate convergence | three scripted strategists within epsilon → consensus in round 0, judge skipped, transcript persisted with 3 openers |
+| Debate hallucination | cited miss distance 42 km vs actual 0.0889 km → CRITICAL HALLUCINATION flag, proposal discarded before selection |
+| Debate loop | verbatim repeat → STALLED + strategist frozen; remaining voices adjudicated by the judge inside budget |
+| Debate fallback | all proposals fabricated → `fallback_used=True` with the legacy single-specialist recommendation |
+| Debate safety intact | 80 m/s voice discarded pre-selection; mission executes on valid 8 m/s burn; armour still REJECTS an 80 m/s payload directly |
 | Persistent watches | duplicate WATCH ignored via idempotent `watch_id`; HIGH re-screen → `AWAITING_HUMAN_APPROVAL` gated behind explicit approval; LOW decline auto-closes; a fresh instance resumes open watches (crash recovery) |
 | Space-Track degradation | missing credentials raise `SpaceTrackUnavailable`; `fetch_real_tle` / `fetch_conjunction_screening` fall back to synthetic data with logged warning and provenance tags (`space-track/v1` vs `simulated_catalogue/v1`) |
 | API surface | all endpoint smoke checks passing against real `google-adk`, including `/api/debrief/{id}`, `/api/audio/{event_type}` and the watch lifecycle (`POST /api/watches`, approval, close) |
@@ -107,6 +116,7 @@ conjunction-response pipeline:
 | AI Models | Gemini 2.5 Pro (alert triage), Gemini 2.5 Flash (astrodynamics + negotiation), Gemini 3.5 Flash default for safety verdicts (env-tunable), **Gemma 3 (onboard edge autonomy)** |
 | Generative Media | **Veo 3** (autonomous mission-debrief video), **Lyria 2** (mission-control audio cues) |
 | Agent Framework | Google Agent Development Kit (ADK) 2.7.1 — mission pipeline + long-running watch supervisor |
+| Self-Evolution | Learning Analyst (Gemini 2.5 Flash) proposes ScreeningPolicy tuning; an adversarial **Meta-Critic** (Gemini 2.5 Pro) reviews it; a deterministic hard envelope clamps everything; a freeze breaker halts repeat offenders |
 | Orbital Mechanics | python-sgp4 propagation, three-stage TCA refinement, Chan's first-order Gaussian Pc; **live Space-Track.org elements & CDMs with synthetic fallback** |
 | Agent Memory | Firestore state + **semantic vector recall of past conjunctions** (Vertex `text-embedding-005` / deterministic local embedder) |
 | Cloud Infrastructure | Cloud Run, Firestore (async client), Cloud Logging |
@@ -171,6 +181,125 @@ to the calibrated synthetic catalogue — every response states its provenance.
 
 > The fleet doesn't start from scratch, doesn't sleep, and doesn't pretend
 > simulation is telemetry.
+
+---
+
+## 🧬 Self-Evolving Fleet (Phase 10)
+
+The fleet improves itself — **but it can never escape the safety envelope.
+Every self-modification is adversarially reviewed, deterministically clamped,
+and logged with a before/after diff.**
+
+### The learning loop
+
+1. **Evidence** — every resolved mission lands an `OutcomeRecord` (what was
+   decided, what it cost, and whether hindsight says we over- or
+   under-reacted) in the memory bank.
+2. **Propose** — the *Learning Analyst* (`gemini-2.5-flash`, zero tools)
+   reviews the current ScreeningPolicy against recent outcomes and must
+   justify every change with cited counts/rates; thin or ambiguous evidence
+   must produce NO CHANGE.
+3. **Deterministic gaming detection** — five pure-code heuristics inspect the
+   proposal *before any LLM review*: convenience drift (raising thresholds to
+   dodge work), attention drift (lowering them to look busy), safety erosion
+   (cutting margins — always CRITICAL), oscillation across cycles, and
+   unjustified magnitude on thin evidence.
+4. **Adversarial review** — the *Meta-Critic* (`gemini-2.5-pro`,
+   temperature 0) assumes the proposer is guilty: every change must be
+   justified by concrete evidence, and its verdict is APPROVE / CLAMP / REJECT
+   with a 0–1 suspicion score.
+5. **Fail-closed rejection** — any CRITICAL flag, a REJECT verdict, or a
+   suspicion score ≥ 0.7 kills the cycle outright.
+6. **Hard envelope clamp — ALWAYS applied**, even to APPROVED proposals:
+   every parameter is bounded to its safe range, limited to ≤20 % of its
+   range per cycle, and ordering-checked (`pc_medium < pc_high`). This step
+   is pure deterministic code; no LLM output is ever saved raw.
+7. **Freeze breaker** — three consecutive rejections (or repeated
+   envelope-pushing) freezes evolution entirely until a human calls
+   `POST /api/evolution/unfreeze`.
+
+And because `screen_conjunction` reads the live policy for its risk bands,
+an applied cycle changes the very next screening decision — this is real
+behaviour change, verified by `test_policy_changes_screening`: a fixed Pc of
+7.51e-4 classifies HIGH under the default policy and MEDIUM after the
+threshold evolves past it.
+
+### Endpoints & demo flow
+
+```bash
+# Seed the temptation batch and pull the trigger:
+curl -X POST "$API/api/evolution/trigger" -H "X-API-Key: $KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"trigger_source": "manual", "seed": "gaming_temptation"}'
+# → REJECTED with a CRITICAL G1/G3 flag and "suspected metric gaming".
+
+curl "$API/api/evolution/policy"  -H "X-API-Key: $KEY"   # current policy + envelope
+curl "$API/api/evolution/history" -H "X-API-Key: $KEY"   # before/after cycle trail
+curl "$API/api/evolution/status"  -H="X-API-Key: $KEY"   # frozen? counters? last trace?
+```
+
+`GET /api/agent_tree` now shows both hierarchies: the mission fleet and the
+evolution engine with its analyst + Meta-Critic beneath an `orbit_fleet`
+root.
+
+| Layer | What stops it |
+|---|---|
+| Deterministic heuristics (G1–G5) | pattern-matched self-serving drift |
+| Meta-Critic LLM | subtle, narrative-level gaming |
+| Hard envelope + max-step clamp | anything at all — even APPROVED proposals |
+| Freeze breaker | the evolution process itself, repeatedly misbehaving |
+
+---
+
+## 🗣️ Multi-Agent Conjunction Debate (Phase 11)
+
+For HIGH-risk conjunctions the single astrodynamics proposal is upgraded to
+a structured **debate among three strategists**, refereed by a deterministic
+moderator — and the whole safety chain downstream is untouched.
+
+**O.R.B.I.T. now demonstrates all three ADK orchestration patterns:**
+sequential pipeline (Phase 2), persistent long-running memory (Phase 8),
+and **iterative multi-agent debate (Phase 11)**.
+
+### The panel
+
+| Voice | Philosophy | Temperature |
+|---|---|---|
+| `fuel_minimizer` | Fuel is lifespan; find the smallest credible burn — or none | 0.6 |
+| `safety_maximizer` | A near-miss is a failure; margins exist to be respected | 0.6 |
+| `reassess` | Burning is irreversible; propose hold-and-rescreen under uncertainty | 0.6 |
+
+The `DebateModerator` is **an ADK BaseAgent — deterministic code, never an
+LLM**. It runs round 0 in parallel, then critique rounds, enforcing:
+
+- **Hallucination cross-check** — every cited Pc / miss distance / TCA /
+  recommended-dv must match the real screening within tolerance;
+  unverifiable numbers = CRITICAL flag = proposal discarded.
+- **Physics check** — strategy enum + delta-v inside [0, 50 m/s].
+- **Policy-envelope check** — burn targets inside the live ScreeningPolicy.
+- **Loop detection** — SHA-256 over each argument's canonical form; a
+  verbatim repeat freezes that strategist (STALLED flag).
+- **Hard budgets** — `ORBIT_DEBATE_MAX_ROUNDS` (default 2) plus a wall-clock
+  cap (`ORBIT_DEBATE_TIME_BUDGET_S`, default 45).
+- **Judge** (`gemini-2.5-pro`, temperature 0) — only when several validated
+  proposals remain unconverged; it may *only choose* among them.
+- **Graceful fallback** — if nothing valid survives, the classic single-
+  specialist recommendation is emitted with `fallback_used=True`. The debate
+  can fail; the mission cannot — because of the debate.
+
+The winning proposal feeds negotiation → SafetyOfficer → ModelArmor exactly
+as before, and the full transcript (arguments, hashes, flags, judge verdict)
+is persisted under the mission trace ID:
+
+```bash
+curl "$API/api/debate/transcript/<trace_id>" -H "X-API-Key: $KEY"
+```
+
+Proven by the suite: an over-ceiling 80 m/s voice is discarded before
+selection, a fabricated citation disqualifies its author, a verbatim
+repeater gets frozen mid-debate while the others finish under the judge,
+total collapse falls back safely, and the downstream armour still rejects
+an over-ceiling payload (belt and braces).
 
 ---
 
@@ -461,6 +590,18 @@ ORBIT/
 │   ├── debrief_generator.py  # Veo 3 mission-debrief video + simulated reconstruction
 │   └── audio_generator.py    # Lyria 2 event cues + offline procedural synth
 ├── frontend/                 # React command center (CesiumJS globe, SSE feed, debrief viewer)
+├── debate/                   # Phase 11 multi-agent conjunction debate
+│   ├── models.py             # ManeuverProposal / DebateArgument / DebateTranscript
+│   ├── strategists.py        # Fuel Minimizer / Safety Maximizer / Reassess (temp 0.6)
+│   ├── judge.py              # DebateJudge: selects among validated proposals only
+│   └── moderator.py          # Deterministic BaseAgent: validation, loops, budgets, fallback
+├── evolution/                # Phase 10 self-evolution subsystem
+│   ├── policy.py             # ScreeningPolicy + hard envelope + clamp + PolicyStore
+│   ├── outcome.py            # MissionOutcome records + demo OutcomeSimulator
+│   ├── gaming.py             # Deterministic G1–G5 gaming heuristics
+│   ├── learning_analyst.py   # Proposer LlmAgent (evidence-justified tuning)
+│   ├── meta_critic.py        # Adversarial reviewer LlmAgent (APPROVE/CLAMP/REJECT)
+│   └── engine.py             # EvolutionEngine: fail-closed 18-step cycle + freeze
 └── geap_sim/
     ├── __init__.py
     ├── memory_bank.py        # Firestore state + vector recall + watch persistence + API cache

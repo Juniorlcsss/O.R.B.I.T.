@@ -52,6 +52,9 @@ from geap_sim.observability import audit_logger
 SATELLITES_COLLECTION: Final[str] = "satellites"
 CONJUNCTIONS_COLLECTION: Final[str] = "conjunctions"
 WATCHES_COLLECTION: Final[str] = "watches"
+OUTCOMES_COLLECTION: Final[str] = "mission_outcomes"
+EVOLUTION_COLLECTION: Final[str] = "evolution_cycles"
+META_COLLECTION: Final[str] = "evolution_meta"
 
 #: Dimensionality of the deterministic local hashing embedder. Vertex AI
 #: embeddings (768-d for text-embedding-005) take precedence whenever the
@@ -512,6 +515,81 @@ class MemoryBank:
             return None
         return record.get("payload")
 
+    # -- generic single-doc API (policy store & evolution meta) ------------------
+
+    async def put_doc(self, collection: str, doc_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Create or overwrite one document by ID."""
+        key = safe_document_id(doc_id)
+        record = {**data, "doc_key": key}
+        await self._write(collection, key, record)
+        return record
+
+    async def get_doc(self, collection: str, doc_id: str) -> dict[str, Any] | None:
+        """Fetch one document by ID; ``None`` when unknown."""
+        key = safe_document_id(doc_id)
+        if self._backend == "firestore":
+            snapshot = await self._client.collection(collection).document(key).get()
+            stored = snapshot.to_dict()
+            return dict(stored) if stored else None
+        return self._memory_store.get((collection, key))
+
+    # -- mission outcomes (self-evolution feedback signal) ------------------------
+
+    async def log_outcome(self, outcome: dict[str, Any], outcome_id: str | None = None) -> dict[str, Any]:
+        """Persist one mission outcome for the learning loop."""
+        key = safe_document_id(outcome_id or f"{outcome.get('conjunction_id', 'outcome')}-{_utc_now_iso()}")
+        record: dict[str, Any] = {"recorded_utc": _utc_now_iso(), **outcome, "outcome_id": key}
+        await self._write(OUTCOMES_COLLECTION, key, record)
+        return record
+
+    async def get_recent_outcomes(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Newest-first mission outcomes (the analyst's evidence base)."""
+        limit = max(1, int(limit))
+        if self._backend == "firestore":
+            query = (
+                self._client.collection(OUTCOMES_COLLECTION)
+                .order_by("recorded_utc", direction="DESCENDING")
+                .limit(limit)
+            )
+            return [dict(doc.to_dict() or {}) async for doc in await query.get()]
+        docs = [dict(doc) for (collection, _), doc in sorted(self._memory_store.items(), reverse=True) if collection == OUTCOMES_COLLECTION]
+        docs.sort(key=lambda d: str(d.get("recorded_utc", "")), reverse=True)
+        return docs[:limit]
+
+    # -- evolution cycle history ---------------------------------------------------
+
+    async def log_evolution_cycle(self, cycle: dict[str, Any]) -> dict[str, Any]:
+        """Persist one completed/rejected evolution cycle (full audit diff)."""
+        key = safe_document_id(f"cycle-{cycle.get('trace_id', 'unknown')}")
+        record: dict[str, Any] = {"recorded_utc": _utc_now_iso(), **cycle, "cycle_id": key}
+        await self._write(EVOLUTION_COLLECTION, key, record)
+        return record
+
+    async def get_evolution_history(self, limit: int = 10) -> list[dict[str, Any]]:
+        """Newest-first evolution cycles — the before/after audit trail."""
+        limit = max(1, int(limit))
+        if self._backend == "firestore":
+            query = (
+                self._client.collection(EVOLUTION_COLLECTION)
+                .order_by("recorded_utc", direction="DESCENDING")
+                .limit(limit)
+            )
+            return [dict(doc.to_dict() or {}) async for doc in await query.get()]
+        docs = [dict(doc) for (collection, _), doc in sorted(self._memory_store.items(), reverse=True) if collection == EVOLUTION_COLLECTION]
+        docs.sort(key=lambda d: (str(d.get("recorded_utc", "")), str(d.get("cycle_id", ""))), reverse=True)
+        return docs[:limit]
+
+    # -- evolution meta state (freeze flag, rejection counters) --------------------
+
+    async def set_meta(self, meta_key: str, value: Any) -> dict[str, Any]:
+        """Write one evolution control value (frozen flag, counters...)."""
+        return await self.put_doc(META_COLLECTION, meta_key, {"value": value})
+
+    async def get_meta(self, meta_key: str, default: Any = None) -> Any:
+        """Read one evolution control value; ``default`` when unset."""
+        doc = await self.get_doc(META_COLLECTION, meta_key)
+        return doc.get("value", default) if doc else default
+
     # -- internals -------------------------------------------------------------
 
     async def _write(self, collection: str, doc_key: str, data: dict[str, Any]) -> None:
@@ -534,8 +612,11 @@ def get_shared_memory_bank() -> MemoryBank:
 
 __all__ = [
     "CONJUNCTIONS_COLLECTION",
+    "EVOLUTION_COLLECTION",
     "FUEL_PERCENT_PER_DV_MPS",
     "MemoryBank",
+    "META_COLLECTION",
+    "OUTCOMES_COLLECTION",
     "SATELLITES_COLLECTION",
     "WATCHES_COLLECTION",
     "append_conjunction_fields",

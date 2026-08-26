@@ -1,6 +1,6 @@
 """Evaluation harness for Project O.R.B.I.T.'s automated suite.
 
-Design philosophy — "test the plane, not the weather"
+Design philosophy â€” "test the plane, not the weather"
 -----------------------------------------------------
 The fleet's *orchestration* is deterministic code: routing, circuit
 breakers, dual-gate Model Armour, memory persistence, audit correlation.
@@ -8,8 +8,8 @@ The specialist LLMs are stochastic weather. This harness therefore runs
 the **real** FleetCommanderPipeline end-to-end while substituting the four
 specialist LLMs with scripted agents whose outputs are schema-valid (and,
 where possible, computed from the real SGP4 tools). Everything downstream
-of an agent's JSON answer — validation, branching, armour gating,
-persistence, audit emission — executes unmodified production code.
+of an agent's JSON answer â€” validation, branching, armour gating,
+persistence, audit emission â€” executes unmodified production code.
 
 This makes the entire suite fast (<30 s), hermetic (no network, no
 credentials, no cost) and reproducible, while a ``--live`` mode exists for
@@ -61,10 +61,33 @@ from agents.orchestrator import (  # noqa: E402
 )
 from agents.safety import MAX_ALLOWED_DELTA_V_MPS  # noqa: E402
 from agents.watcher import watcher_agent  # noqa: E402
+from debate.moderator import debate_moderator_agent  # noqa: E402
 from geap_sim.memory_bank import MemoryBank, safe_document_id  # noqa: E402
 from geap_sim.model_armor import ModelArmor  # noqa: E402
 from geap_sim.observability import audit_logger  # noqa: E402
 from tools.space_tools import screen_conjunction  # noqa: E402
+
+
+def astro_screening_fixture(
+    sat_id: str = "LANCASTER_ORBIT_1",
+    debris_id: str = "FENGYUN_1C_DEB",
+    recommended_dv_mps: float = 8.0,
+) -> dict[str, Any]:
+    """Screening in the astrodynamics specialist's OUTPUT CONTRACT shape —
+    exactly what the debate moderator receives inside a live mission."""
+    screened = screen_conjunction(sat_id, debris_id)
+    assert screened.get("status") == "ok"
+    return {
+        "sat_id": sat_id.upper(),
+        "debris_id": debris_id.upper(),
+        "risk_band": screened["risk_level"],
+        "pc": float(screened["probability_of_collision"]),
+        "miss_distance_km": float(screened["miss_distance_km"]),
+        "tca_iso": screened["tca_utc"],
+        "recommended_dv_mps": recommended_dv_mps,
+        "dv_direction": "prograde" if screened["risk_level"] == "HIGH" else "none",
+        "reasoning": "harness fixture grounded in real SGP4 screening",
+    }
 
 
 @dataclass
@@ -119,7 +142,7 @@ class ScriptedAgent(BaseAgent):
 
 
 class FailingAgent(BaseAgent):
-    """Specialist stand-in that always raises — the circuit-breaker fuel."""
+    """Specialist stand-in that always raises â€” the circuit-breaker fuel."""
 
     error_message: str = "simulated provider outage"
 
@@ -127,7 +150,7 @@ class FailingAgent(BaseAgent):
 
     async def _run_async_impl(self, ctx: InvocationContext):
         raise RuntimeError(self.error_message)
-        yield  # pragma: no cover — makes this an async generator
+        yield  # pragma: no cover â€” makes this an async generator
 
 
 # ---------------------------------------------------------------------------
@@ -168,7 +191,7 @@ def screening_payload(
 
 
 def real_screening_payload(sat_id: str, debris_id: str) -> Callable[[], dict[str, Any]]:
-    """Factory backed by the REAL SGP4 screening tool — truthful orbital math."""
+    """Factory backed by the REAL SGP4 screening tool â€” truthful orbital math."""
 
     def factory() -> dict[str, Any]:
         screened = screen_conjunction(sat_id, debris_id)
@@ -220,11 +243,17 @@ class EvaluationHarness:
         # Fresh MemoryBank per harness == isolated satellite/conjunction store.
         self.memory_bank = MemoryBank()
         self.armor = ModelArmor(memory_bank=self.memory_bank)
+        from evolution.policy import PolicyStore
+
+        self.policy_store = PolicyStore(bank=self.memory_bank)
         self._session_service = InMemorySessionService()
 
-    def build_pipeline(self, *args: Any, triage: BaseAgent | None = None,
-                       astro: BaseAgent | None = None, diplomat: BaseAgent | None = None,
-                       safety: BaseAgent | None = None) -> FleetCommanderPipeline:
+    def build_pipeline(
+        self,
+        *args: Any, triage: BaseAgent | None = None,
+        astro: BaseAgent | None = None, diplomat: BaseAgent | None = None,
+        safety: BaseAgent | None = None, debate_moderator: BaseAgent | None = None,
+    ) -> FleetCommanderPipeline:
         """Real FleetCommanderPipeline with selected specialists replaced.
 
         Accepts either ``build_pipeline(specialists_tuple)`` or
@@ -235,7 +264,7 @@ class EvaluationHarness:
             p_triage, p_astro, p_diplomat, p_safety = args[0]
         elif len(args) == 4:
             p_triage, p_astro, p_diplomat, p_safety = args
-        elif len(args) == 2:  # (triage, astro) — chaos scenarios kill upstream first
+        elif len(args) == 2:  # (triage, astro) â€” chaos scenarios kill upstream first
             p_triage, p_astro, p_diplomat, p_safety = args[0], args[1], None, None
         else:
             p_triage = p_astro = p_diplomat = p_safety = None
@@ -248,6 +277,7 @@ class EvaluationHarness:
             model_armor_checkpoint=safety or p_safety or real_safety,
             edge_autopilot=gemma_edge_agent,
             watch_commander=watcher_agent,
+            debate_moderator=debate_moderator or debate_moderator_agent,
             mission_memory=self.memory_bank,
             armor_inspector=self.armor,
             sub_agents=[],
@@ -322,3 +352,87 @@ class EvaluationHarness:
 
     async def read_conjunction(self, conjunction_id: str) -> dict[str, Any] | None:
         return await self.memory_bank.get_conjunction_event(conjunction_id)
+
+    # -- evolution helpers -------------------------------------------------------
+
+    def fresh_evolution_engine(self, analyst_factory, critic_factory):
+        """Scripted-specialist EvolutionEngine on this harness's memory bank."""
+        from evolution.engine import EvolutionEngine, PROPOSAL_OUTPUT_KEY, VERDICT_OUTPUT_KEY
+
+        return EvolutionEngine(
+            name="evolution_engine_eval",
+            learning_analyst=ScriptedAgent(
+                name="learning_analyst", output_key=PROPOSAL_OUTPUT_KEY, payload_factory=analyst_factory
+            ),
+            meta_critic=ScriptedAgent(
+                name="meta_critic", output_key=VERDICT_OUTPUT_KEY, payload_factory=critic_factory
+            ),
+            mission_memory=self.memory_bank,
+            policy_store=self.policy_store,
+            sub_agents=[],
+        )
+
+    async def run_evolution_cycle(self, engine, trigger: str = "manual") -> dict[str, Any]:
+        """Run one evolution cycle through the real ADK Runner; return report."""
+        from evolution.engine import STATE_REPORT_KEY
+
+        session = await self._session_service.create_session(app_name=APP_NAME, user_id="eval-evolution", state={})
+        message = genai_types.Content(
+            role="user",
+            parts=[genai_types.Part(text=json.dumps({"trigger_source": trigger}))],
+        )
+        async for _ in Runner(agent=engine, app_name=APP_NAME, session_service=self._session_service).run_async(
+            user_id=session.user_id, session_id=session.id, new_message=message
+        ):
+            pass
+        final_session = await self._session_service.get_session(
+            app_name=APP_NAME, user_id=session.user_id, session_id=session.id
+        )
+        raw_report = (final_session.state if final_session else {}).get(STATE_REPORT_KEY, "")
+        return json.loads(raw_report) if raw_report else {"status": "ENGINE_ERROR", "reasoning": "no report committed"}
+
+    # -- debate helpers -----------------------------------------------------------
+
+    def fresh_debate_moderator(self, fuel_factory, safety_factory, reassess_factory, judge_factory):
+        """Scripted-strategist DebateModerator on this harness's memory bank."""
+        from debate.judge import OUTPUT_KEY as JUDGE_KEY
+        from debate.moderator import DEBATE_OUTCOME_STATE_KEY, DebateModerator
+
+        return DebateModerator(
+            name="debate_moderator_eval",
+            fuel_minimizer=ScriptedAgent(name="fuel_minimizer", output_key="orbit_debate_fuel_minimizer", payload_factory=fuel_factory),
+            safety_maximizer=ScriptedAgent(name="safety_maximizer", output_key="orbit_debate_safety_maximizer", payload_factory=safety_factory),
+            reassess=ScriptedAgent(name="reassess", output_key="orbit_debate_reassess", payload_factory=reassess_factory),
+            debate_judge=ScriptedAgent(name="debate_judge", output_key=JUDGE_KEY, payload_factory=judge_factory),
+            mission_memory=self.memory_bank,
+            policy_store=self.policy_store,
+            sub_agents=[],
+        )
+
+    async def run_debate(
+        self,
+        moderator,
+        screening: dict[str, Any],
+        sat_id: str = "LANCASTER_ORBIT_1",
+        debris_id: str = "FENGYUN_1C_DEB",
+        trace_id: str | None = None,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Run one debate; returns (outcome_dict, trace_id)."""
+        from debate.moderator import DEBATE_OUTCOME_STATE_KEY
+
+        tid = trace_id or uuid.uuid4().hex
+        state = {
+            STATE_TRACE_ID: tid,
+            "orbit_screening:parsed": screening,
+            "orbit_debate_sat_id": sat_id,
+            "orbit_debate_debris_id": debris_id,
+        }
+        session = await self._session_service.create_session(app_name=APP_NAME, user_id="eval-debate", state=state)
+        message = genai_types.Content(role="user", parts=[genai_types.Part(text=json.dumps({"debate": True}))])
+        async for _ in Runner(agent=moderator, app_name=APP_NAME, session_service=self._session_service).run_async(
+            user_id=session.user_id, session_id=session.id, new_message=message
+        ):
+            pass
+        final_session = await self._session_service.get_session(app_name=APP_NAME, user_id=session.user_id, session_id=session.id)
+        raw = (final_session.state if final_session else {}).get(DEBATE_OUTCOME_STATE_KEY, "")
+        return (json.loads(raw) if raw else None), tid

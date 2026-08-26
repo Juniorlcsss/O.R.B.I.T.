@@ -509,6 +509,64 @@ def _error(error_code: str, message: str, **context: Any) -> dict[str, Any]:
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Live ScreeningPolicy thresholds (Phase 10 self-evolution linchpin)
+# ---------------------------------------------------------------------------
+
+_POLICY_CACHE_TTL_SECONDS: Final[float] = 5.0
+_policy_cache: Final[dict[str, Any]] = {"loaded_monotonic": 0.0, "high": HIGH_RISK_THRESHOLD_P, "medium": MEDIUM_RISK_THRESHOLD_P}
+
+
+def _risk_thresholds() -> tuple[float, float]:
+    """(high, medium) Pc thresholds from the live ScreeningPolicy.
+
+    Synchronous by contract (screening is a sync tool); bridges into the
+    async PolicyStore when no loop is running and serves a short-TTL cache
+    otherwise. Any failure keeps the CARA defaults — screening can never be
+    broken by the memory layer, but an applied evolution cycle always
+    changes the very next classification.
+    """
+    import asyncio
+    import time as _time
+
+    now = _time.monotonic()
+    cached = _policy_cache["loaded_monotonic"]
+    if now - cached < _POLICY_CACHE_TTL_SECONDS:
+        return _policy_cache["high"], _policy_cache["medium"]
+
+    try:
+        from evolution.policy import get_shared_policy_store
+
+        store = get_shared_policy_store()
+
+        async def _load() -> None:
+            policy = await store.load()
+            _policy_cache["high"] = float(policy.pc_high_threshold)
+            _policy_cache["medium"] = float(policy.pc_medium_threshold)
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            asyncio.run(_load())
+        else:
+            # Inside a running loop (ADK async tool invocation): refresh in
+            # a worker thread so we never block or nest loops.
+            import concurrent.futures
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                pool.submit(asyncio.run, _load()).result(timeout=10)
+        _policy_cache["loaded_monotonic"] = now
+    except Exception:  # noqa: BLE001 — defaults keep screening alive
+        pass
+
+    return _policy_cache["high"], _policy_cache["medium"]
+
+
+def invalidate_policy_cache() -> None:
+    """Drop the threshold cache so the next screening re-reads the policy."""
+    _policy_cache["loaded_monotonic"] = 0.0
+
+
 def _unknown_object_error(object_id: str) -> dict[str, Any]:
     return _error(
         "UNKNOWN_OBJECT_ID",
@@ -629,12 +687,17 @@ def screen_conjunction(sat_id: str, debris_id: str) -> dict[str, Any]:
     probability = scale_factor * math.exp(-(miss_km**2) / (2.0 * sigma_km**2))
     probability = min(1.0, max(probability, 1.0e-15))
 
-    if probability >= HIGH_RISK_THRESHOLD_P:
+    # ---- Risk classification reads the LIVE ScreeningPolicy -------------------
+    # After an applied evolution cycle the next screening uses the evolved
+    # thresholds; any load failure falls back to the CARA defaults.
+    high_threshold, medium_threshold = _risk_thresholds()
+
+    if probability >= high_threshold:
         risk_level, recommended_action = (
             "HIGH",
             "IMMEDIATE ACTION REQUIRED: escalate to FleetCommander for dodge coordination.",
         )
-    elif probability >= MEDIUM_RISK_THRESHOLD_P:
+    elif probability >= medium_threshold:
         risk_level, recommended_action = (
             "MEDIUM",
             "MONITOR: reassess on next ground pass and prepare a contingency burn plan.",
@@ -657,7 +720,7 @@ def screen_conjunction(sat_id: str, debris_id: str) -> dict[str, Any]:
         "recommended_action": recommended_action,
         "method": "sgp4_propagation+chan_first_order_gaussian",
         "screening_window_hours": 24,
-        "policy_thresholds": {"high": HIGH_RISK_THRESHOLD_P, "medium": MEDIUM_RISK_THRESHOLD_P},
+        "policy_thresholds": {"high": high_threshold, "medium": medium_threshold},
         "simulated": True,
     }
 
