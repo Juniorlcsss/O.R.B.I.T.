@@ -16,7 +16,7 @@ google-genai SDK::
 
     from google import genai
 
-    client = genai.Client(vertex=True)          # Application Default Credentials
+    client = genai.Client(vertexai=True, location=_MEDIA_LOCATION)   # ADC
     operation = client.models.generate_videos(
         model="veo-3.0-generate-001",           # Veo 3, Vertex AI Model Garden
         prompt=cinematic_prompt,
@@ -41,6 +41,7 @@ import asyncio
 import base64
 import hashlib
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any, Final
 
@@ -53,6 +54,10 @@ VEO_MODEL_ID: Final[str] = os.environ.get("ORBIT_VEO_MODEL_ID", "veo-3.0-generat
 #: Master switch for the real Vertex AI call. Off by default so local runs
 #: never attempt paid API traffic implicitly.
 _REAL_VEO_ENABLED: Final[bool] = os.environ.get("ORBIT_ENABLE_REAL_VEO", "").strip() == "1"
+_MEDIA_LOCATION: Final[str] = os.environ.get("ORBIT_MEDIA_LOCATION", "us-central1")
+
+_VEO_POLL_INTERVAL_S: Final[float] = float(os.environ.get("ORBIT_VEO_POLL_INTERVAL_S", "10"))
+_VEO_POLL_BUDGET_S: Final[float] = float(os.environ.get("ORBIT_VEO_POLL_BUDGET_S", "300"))
 
 _DEBRIEF_TEMPLATE: Final[str] = (
     "{sat_id} versus {debris_id}: risk band {risk_band}, Pc {pc:.2e}, "
@@ -190,7 +195,7 @@ async def _veo_generate(prompt: str) -> dict[str, Any]:
     from google.genai import types as genai_types
     from google import genai
 
-    client = genai.Client(vertex=True)
+    client = genai.Client(vertexai=True, location=_MEDIA_LOCATION)
 
     def _call() -> str:
         operation = client.models.generate_videos(
@@ -198,8 +203,15 @@ async def _veo_generate(prompt: str) -> dict[str, Any]:
             prompt=prompt,
             config=genai_types.GenerateVideosConfig(number_of_videos=1),
         )
+        
+        deadline = time.monotonic() + _VEO_POLL_BUDGET_S
         while not operation.done:
-            raise TimeoutError("Veo operation still running after polling budget")
+            if time.monotonic() > deadline:
+                raise TimeoutError(
+                    f"Veo operation still running after {_VEO_POLL_BUDGET_S:.0f}s"
+                )
+            time.sleep(_VEO_POLL_INTERVAL_S)
+            operation = client.operations.get(operation)
         video = operation.response.generated_videos[0].video
         return getattr(video, "uri", None) or getattr(video, "gcs_uri", "")
 

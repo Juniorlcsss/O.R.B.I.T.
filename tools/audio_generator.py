@@ -49,6 +49,7 @@ LYRIA_MODEL_ID: Final[str] = os.environ.get("ORBIT_LYRIA_MODEL_ID", "lyria-002")
 
 #: Master switch for the real Vertex AI call (opt-in only).
 _REAL_LYRIA_ENABLED: Final[bool] = os.environ.get("ORBIT_ENABLE_REAL_LYRIA", "").strip() == "1"
+_MEDIA_LOCATION: Final[str] = os.environ.get("ORBIT_MEDIA_LOCATION", "us-central1")
 
 _SAMPLE_RATE: Final[int] = 22_050
 
@@ -199,7 +200,7 @@ async def _lyria_generate(prompt: str) -> bytes:
     """Call Vertex AI Lyria (see module docstring); returns WAV bytes."""
     from google import genai  # imported lazily so offline demos never pay it
 
-    client = genai.Client(vertex=True)
+    client = genai.Client(vertexai=True, location=_MEDIA_LOCATION)
 
     def _call() -> bytes:
         response = client.models.generate_music(model=LYRIA_MODEL_ID, prompt=prompt)
