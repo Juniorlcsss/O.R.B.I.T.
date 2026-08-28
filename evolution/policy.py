@@ -1,16 +1,16 @@
-"""Evolution â€” the tunable ScreeningPolicy and its hard safety envelope.
+"""Evolution — the tunable ScreeningPolicy and its hard safety envelope.
 
 The ScreeningPolicy is the fleet's learned judgement about risk. Every
 field is bounded by ``EVOLUTION_ENVELOPE`` and every transition is limited
-by ``MAX_STEP_FRACTION`` â€” together they form a deterministic box the
+by ``MAX_STEP_FRACTION`` — together they form a deterministic box the
 fleet literally cannot think its way out of:
 
 * ``pc_high_threshold``   can never leave [1e-5, 1e-3] (default CARA HIGH
                           bound is 1e-4; the fleet may drift within a
                           decade either way, never further).
-* ``fuel_reserve_floor_pct`` can never drop below 5 % â€” the strategic
+* ``fuel_reserve_floor_pct`` can never drop below 5 % — the strategic
                           reserve is not negotiable at any confidence level.
-* ``delta_v_efficiency_bias`` can never reach 1.0 â€” pure fuel-optimisation
+* ``delta_v_efficiency_bias`` can never reach 1.0 — pure fuel-optimisation
                           is forbidden; the fleet must always retain a
                           safety-first weighting.
 * No parameter may jump more than ``MAX_STEP_FRACTION`` of its envelope
@@ -18,7 +18,7 @@ fleet literally cannot think its way out of:
   gradually and observably.
 
 ``clamp_to_envelope`` is PURE and DETERMINISTIC: same inputs, same output,
-no LLM anywhere near it. It runs on EVERY candidate policy â€” APPROVED,
+no LLM anywhere near it. It runs on EVERY candidate policy — APPROVED,
 CLAMPed or otherwise.
 """
 
@@ -71,7 +71,7 @@ _TUNABLES: Final[tuple[str, ...]] = tuple(EVOLUTION_ENVELOPE)
 
 
 # ---------------------------------------------------------------------------
-# clamp_to_envelope â€” the deterministic hard boundary
+# clamp_to_envelope — the deterministic hard boundary
 # ---------------------------------------------------------------------------
 
 
@@ -80,7 +80,7 @@ def clamp_to_envelope(current: ScreeningPolicy, proposed: ScreeningPolicy) -> tu
 
     Applied in order:
       (a) per-parameter envelope bounds,
-      (b) max-step limiting (â‰¤ MAX_STEP_FRACTION of the envelope range per
+      (b) max-step limiting (≤ MAX_STEP_FRACTION of the envelope range per
           cycle, measured from ``current``),
       (c)+(d) ordering invariant pc_medium_threshold < pc_high_threshold,
           re-verified after clamping with a deterministic decade-separation
@@ -111,7 +111,7 @@ def clamp_to_envelope(current: ScreeningPolicy, proposed: ScreeningPolicy) -> tu
         if abs(value - anchor) > max_step:
             value = anchor + max_step if value > anchor else anchor - max_step
             # A step-limit may itself push past an envelope edge when the
-            # anchor sits near a bound â€” re-bound afterwards.
+            # anchor sits near a bound — re-bound afterwards.
             value = min(high, max(low, value))
 
         if abs(value - original) > 1e-15:
@@ -168,7 +168,7 @@ def validate_invariants(policy: ScreeningPolicy) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# PolicyStore â€” async persistence over the MemoryBank
+# PolicyStore — async persistence over the MemoryBank
 # ---------------------------------------------------------------------------
 
 _POLICY_COLLECTION: Final[str] = "evolution_current_policy"
@@ -203,14 +203,14 @@ class PolicyStore:
 
         try:
             doc = await self._bank.get_doc(_POLICY_COLLECTION, _POLICY_DOC_ID)
-        except Exception:  # noqa: BLE001 â€” screening must survive storage faults
+        except Exception:  # noqa: BLE001 — screening must survive storage faults
             doc = None
         if not doc:
             policy = ScreeningPolicy()
         else:
             try:
                 policy = ScreeningPolicy(**{k: v for k, v in dict(doc).items() if k != "doc_key"})
-            except Exception:  # noqa: BLE001 â€” corrupt stored policy â†’ defaults + loud audit
+            except Exception:
                 from geap_sim.observability import audit_logger
 
                 audit_logger.log_event(
@@ -241,7 +241,7 @@ class PolicyStore:
             from tools.space_tools import invalidate_policy_cache
 
             invalidate_policy_cache()
-        except Exception:  # noqa: BLE001 â€” cache hygiene must never break saving
+        except Exception:  # noqa: BLE001 — cache hygiene must never break saving
             pass
         return stored
 

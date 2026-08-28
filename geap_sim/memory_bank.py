@@ -26,7 +26,7 @@ portable simulation of exactly that query.
 
 Local-dev resilience
 --------------------
-Production code paths hit real Firestore through ``AsyncFirestoreClient``;
+Production code paths hit real Firestore through ``AsyncClient``;
 if credentials are absent and no ``FIRESTORE_EMULATOR_HOST`` is configured —
 the typical hackathon-laptop situation — construction fails and the bank
 transparently degrades to an in-process dictionary backend. Callers cannot
@@ -44,6 +44,7 @@ import hashlib
 import math
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from typing import Any, Final
 
@@ -148,7 +149,7 @@ def _vertex_embed(text: str) -> list[float]:
     """Vertex AI text embedding via google-genai (production path)."""
     from google import genai
 
-    client = genai.Client(vertex=True)
+    client = genai.Client(vertexai=True)
     response = client.models.embed_content(model=_VERTEX_EMBED_MODEL, contents=[text])
     values = list(response.embeddings[0].values)
     norm = math.sqrt(sum(value * value for value in values)) or 1.0
@@ -188,7 +189,7 @@ def _vertex_probe() -> bool:
     """Cheap liveness check that the Vertex embedding path can initialise."""
     from google import genai
 
-    genai.Client(vertex=True)
+    genai.Client(vertexai=True)
     return True
 
 
@@ -204,6 +205,43 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
     return dot / (na * nb)
 
 
+def _credential_diagnostics() -> dict[str, Any]:
+    """Report what the process can actually see, for startup auditing.
+
+    ``GOOGLE_APPLICATION_CREDENTIALS`` is never read by this module directly:
+    it is the Application Default Credentials mechanism, consumed by
+    ``google-auth`` when the Firestore client is constructed. We only record
+    whether it points at a file that exists, because a relative path (e.g.
+    ``./service-account.json``) resolves against the *current working
+    directory*, which differs between local ``uvicorn`` runs and Cloud Run.
+    """
+    cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    return {
+        "google_cloud_project": os.getenv("GOOGLE_CLOUD_PROJECT") or None,
+        "credentials_path": cred_path,
+        "credentials_file_found": bool(cred_path) and os.path.isfile(cred_path),
+        "emulator_host": os.getenv("FIRESTORE_EMULATOR_HOST") or None,
+    }
+
+
+def _audit_firestore_failure(stage: str, exc: BaseException) -> None:
+    """Log why Firestore was unavailable — audit trail *and* stderr.
+
+    Previously this failure was swallowed by a bare ``except ImportError``,
+    so a wrong client symbol was indistinguishable from a laptop with no
+    credentials. Both now name themselves.
+    """
+    detail = f"{type(exc).__name__}: {exc}"
+    audit_logger.log_event(
+        trace_id="startup",
+        agent_name="geap_sim.memory_bank",
+        event_type="MEMORY_BANK_FIRESTORE_UNAVAILABLE",
+        payload={"stage": stage, "error": detail, **_credential_diagnostics()},
+        status="DEGRADED",
+    )
+    print(f"[memory_bank] Firestore unavailable at {stage}: {detail}", file=sys.stderr)
+
+
 class MemoryBank:
     """Persistent satellite state + conjunction history (Firestore or memory).
 
@@ -212,18 +250,22 @@ class MemoryBank:
     """
 
     def __init__(self) -> None:
-        self._backend: Final[str] = self._select_backend()
+        self._backend: str = self._select_backend()
         self._memory_store: dict[tuple[str, str], dict[str, Any]] = {}
-        self._client: Any = None
+        self._clients: dict[int, Any] = {}
         if self._backend == "firestore":
-            from google.cloud.firestore import AsyncFirestoreClient
+            try:
+                from google.cloud.firestore import AsyncClient
 
-            self._client = AsyncFirestoreClient()
+                AsyncClient()
+            except Exception as exc:  # noqa: BLE001 — degrade, but never silently
+                self._backend = "memory"
+                _audit_firestore_failure("client_init", exc)
         audit_logger.log_event(
             trace_id="startup",
             agent_name="geap_sim.memory_bank",
             event_type="MEMORY_BANK_BACKEND_SELECTED",
-            payload={"backend": self._backend},
+            payload={"backend": self._backend, **_credential_diagnostics()},
             status=self._backend.upper(),
         )
 
@@ -234,13 +276,14 @@ class MemoryBank:
         if mode == "memory":
             return "memory"
         try:
-            from google.cloud.firestore import AsyncFirestoreClient  # noqa: F401
-        except ImportError:
+            from google.cloud.firestore import AsyncClient  # noqa: F401
+        except Exception as exc:  # noqa: BLE001 — surface the real reason
+            _audit_firestore_failure("import", exc)
             if mode == "firestore":
                 raise RuntimeError(
-                    "ORBIT_MEMORY_BACKEND=firestore but google-cloud-firestore "
-                    "is not installed. Install it or unset the override."
-                )
+                    "ORBIT_MEMORY_BACKEND=firestore but google.cloud.firestore."
+                    f"AsyncClient could not be imported: {exc!r}"
+                ) from exc
             return "memory"
         if not (os.getenv("FIRESTORE_EMULATOR_HOST") or os.getenv("GCP_PROJECT") or os.getenv("GOOGLE_CLOUD_PROJECT")):
             if mode == "firestore":
@@ -248,6 +291,20 @@ class MemoryBank:
             # Auto mode without credentials/emulator/project → degrade quietly.
             return "memory"
         return "firestore"
+
+    def _db(self) -> Any:
+        """Return a Firestore client bound to the *currently running* loop.
+
+        Must only be called from async context on the firestore backend.
+        """
+        loop_key = id(asyncio.get_running_loop())
+        client = self._clients.get(loop_key)
+        if client is None:
+            from google.cloud.firestore import AsyncClient
+
+            client = AsyncClient()
+            self._clients[loop_key] = client
+        return client
 
     @property
     def backend_name(self) -> str:
@@ -268,7 +325,7 @@ class MemoryBank:
         """
         key = safe_document_id(sat_id).upper()
         if self._backend == "firestore":
-            snapshot = await self._client.collection(SATELLITES_COLLECTION).document(key).get()
+            snapshot = await self._db().collection(SATELLITES_COLLECTION).document(key).get()
             stored: dict[str, Any] = dict(snapshot.to_dict() or {})
         else:
             stored = dict(self._memory_store.get((SATELLITES_COLLECTION, key), {}))
@@ -378,7 +435,7 @@ class MemoryBank:
 
         candidates: list[dict[str, Any]] = []
         if self._backend == "firestore":
-            docs = [dict(doc.to_dict() or {}) async for doc in self._client.collection(CONJUNCTIONS_COLLECTION).stream()]
+            docs = [dict(doc.to_dict() or {}) async for doc in self._db().collection(CONJUNCTIONS_COLLECTION).stream()]
         else:
             docs = [dict(doc) for (collection, _), doc in sorted(self._memory_store.items()) if collection == CONJUNCTIONS_COLLECTION]
 
@@ -414,13 +471,14 @@ class MemoryBank:
         key = safe_document_id(sat_id).upper()
         limit = max(1, int(limit))
         if self._backend == "firestore":
-            query = (
-                self._client.collection(CONJUNCTIONS_COLLECTION)
-                .where("sat_id", "==", key)
-                .order_by("recorded_utc", direction="DESCENDING")
-                .limit(limit)
+            from google.cloud.firestore_v1.base_query import FieldFilter
+
+            query = self._db().collection(CONJUNCTIONS_COLLECTION).where(
+                filter=FieldFilter("sat_id", "==", key)
             )
-            return [dict(doc.to_dict() or {}) async for doc in await query.get()]
+            docs = [dict(doc.to_dict() or {}) async for doc in query.stream()]
+            docs.sort(key=lambda d: str(d.get("recorded_utc", "")), reverse=True)
+            return docs[:limit]
         matches = [
             dict(doc)
             for (collection, doc_key), doc in sorted(self._memory_store.items())
@@ -433,7 +491,7 @@ class MemoryBank:
         """Fetch one conjunction record by ID; ``None`` when unknown."""
         key = safe_document_id(conjunction_id)
         if self._backend == "firestore":
-            snapshot = await self._client.collection(CONJUNCTIONS_COLLECTION).document(key).get()
+            snapshot = await self._db().collection(CONJUNCTIONS_COLLECTION).document(key).get()
             stored = snapshot.to_dict()
             return dict(stored) if stored else None
         return self._memory_store.get((CONJUNCTIONS_COLLECTION, key))
@@ -465,7 +523,7 @@ class MemoryBank:
         """Fetch one watch by ID; ``None`` when unknown."""
         key = safe_document_id(watch_id)
         if self._backend == "firestore":
-            snapshot = await self._client.collection(WATCHES_COLLECTION).document(key).get()
+            snapshot = await self._db().collection(WATCHES_COLLECTION).document(key).get()
             stored = snapshot.to_dict()
             return dict(stored) if stored else None
         return self._memory_store.get((WATCHES_COLLECTION, key))
@@ -473,10 +531,12 @@ class MemoryBank:
     async def list_watches(self, status: str | None = None) -> list[dict[str, Any]]:
         """All watches, optionally filtered by status (oldest first)."""
         if self._backend == "firestore":
-            query = self._client.collection(WATCHES_COLLECTION)
+            query = self._db().collection(WATCHES_COLLECTION)
             if status:
-                query = query.where("status", "==", status)
-            docs = [dict(doc.to_dict() or {}) async for doc in await query.get()]
+                from google.cloud.firestore_v1.base_query import FieldFilter
+
+                query = query.where(filter=FieldFilter("status", "==", status))
+            docs = [dict(doc.to_dict() or {}) async for doc in query.stream()]
         else:
             docs = [
                 dict(doc)
@@ -499,7 +559,7 @@ class MemoryBank:
         """Cached payload if present and younger than ``max_age_seconds``."""
         key = f"{collection}:{safe_document_id(cache_key)}".replace(":", "-")
         if self._backend == "firestore":
-            snapshot = await self._client.collection(collection).document(key).get()
+            snapshot = await self._db().collection(collection).document(key).get()
             stored = snapshot.to_dict()
             record = dict(stored) if stored else None
         else:
@@ -528,7 +588,7 @@ class MemoryBank:
         """Fetch one document by ID; ``None`` when unknown."""
         key = safe_document_id(doc_id)
         if self._backend == "firestore":
-            snapshot = await self._client.collection(collection).document(key).get()
+            snapshot = await self._db().collection(collection).document(key).get()
             stored = snapshot.to_dict()
             return dict(stored) if stored else None
         return self._memory_store.get((collection, key))
@@ -547,11 +607,11 @@ class MemoryBank:
         limit = max(1, int(limit))
         if self._backend == "firestore":
             query = (
-                self._client.collection(OUTCOMES_COLLECTION)
+                self._db().collection(OUTCOMES_COLLECTION)
                 .order_by("recorded_utc", direction="DESCENDING")
                 .limit(limit)
             )
-            return [dict(doc.to_dict() or {}) async for doc in await query.get()]
+            return [dict(doc.to_dict() or {}) async for doc in query.stream()]
         docs = [dict(doc) for (collection, _), doc in sorted(self._memory_store.items(), reverse=True) if collection == OUTCOMES_COLLECTION]
         docs.sort(key=lambda d: str(d.get("recorded_utc", "")), reverse=True)
         return docs[:limit]
@@ -570,11 +630,11 @@ class MemoryBank:
         limit = max(1, int(limit))
         if self._backend == "firestore":
             query = (
-                self._client.collection(EVOLUTION_COLLECTION)
+                self._db().collection(EVOLUTION_COLLECTION)
                 .order_by("recorded_utc", direction="DESCENDING")
                 .limit(limit)
             )
-            return [dict(doc.to_dict() or {}) async for doc in await query.get()]
+            return [dict(doc.to_dict() or {}) async for doc in query.stream()]
         docs = [dict(doc) for (collection, _), doc in sorted(self._memory_store.items(), reverse=True) if collection == EVOLUTION_COLLECTION]
         docs.sort(key=lambda d: (str(d.get("recorded_utc", "")), str(d.get("cycle_id", ""))), reverse=True)
         return docs[:limit]
@@ -594,7 +654,7 @@ class MemoryBank:
 
     async def _write(self, collection: str, doc_key: str, data: dict[str, Any]) -> None:
         if self._backend == "firestore":
-            await self._client.collection(collection).document(doc_key).set(data, merge=True)
+            await self._db().collection(collection).document(doc_key).set(data, merge=True)
         else:
             self._memory_store[(collection, doc_key)] = dict(data)
 

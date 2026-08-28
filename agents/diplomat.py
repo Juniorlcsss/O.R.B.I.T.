@@ -18,6 +18,7 @@ from typing import Final
 
 from google.adk.agents import LlmAgent
 from google.genai import types
+from geap_sim.model_config import structured_json_config
 
 from tools.space_tools import DIPLOMAT_TOOLKIT
 
@@ -25,7 +26,7 @@ AGENT_NAME: Final[str] = "negotiation_officer"
 OUTPUT_KEY: Final[str] = "orbit_negotiation"
 
 #: Cost-efficient flash model: negotiation is a bounded, schema-driven task.
-_MODEL_ID = os.environ.get("ORBIT_DIPLOMAT_MODEL_ID", "gemini-2.5-flash")
+_MODEL_ID = os.environ.get("ORBIT_DIPLOMAT_MODEL_ID", "gemini-3.5-flash")
 
 _TEMPERATURE: Final[float] = 0.3
 
@@ -85,10 +86,9 @@ diplomat_agent = LlmAgent(
     ),
     instruction=_SYSTEM_INSTRUCTION,
     tools=list(DIPLOMAT_TOOLKIT),
-    generate_content_config=types.GenerateContentConfig(
+    generate_content_config=structured_json_config(
+        answer_tokens=1024,
         temperature=_TEMPERATURE,
-        max_output_tokens=1024,
-        response_mime_type="application/json",
     ),
     output_key=OUTPUT_KEY,
 )

@@ -79,11 +79,11 @@ async def main(save: bool) -> int:
     rows: list[dict] = []
 
     # --- 1. SGP4 screening -----------------------------------------------------
-    rows.append(summarise("SGP4 conjunction screening", bench_sync(lambda: screen_conjunction("LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"), 150)))
+    rows.append(summarise("SGP4 conjunction screening", bench_sync(lambda: screen_conjunction("SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"), 150)))
 
     # --- 2. Model Armour -------------------------------------------------------
     armor = ModelArmor(memory_bank=get_shared_memory_bank())
-    negotiation = {"action": "we_dodge", "our_dv_mps": 8.0, "their_dv_mps": 0.0, "sat_id": "LANCASTER_ORBIT_1"}
+    negotiation = {"action": "we_dodge", "our_dv_mps": 8.0, "their_dv_mps": 0.0, "sat_id": "SIM_PROTECTED_ASSET"}
     verdict = {"approved": True, "expected_delta_v_mps": 8.0}
 
     async def armour_once() -> None:
@@ -102,7 +102,7 @@ async def main(save: bool) -> int:
     bank = get_shared_memory_bank()
 
     async def read_once() -> None:
-        await bank.get_satellite_state("LANCASTER_ORBIT_1")
+        await bank.get_satellite_state("SIM_PROTECTED_ASSET")
 
     async def write_once(i: int) -> None:
         await bank.update_satellite_state("BENCH_SAT", delta_v_expended=0.01, new_fuel=99.9)
@@ -117,7 +117,7 @@ async def main(save: bool) -> int:
 
     # --- 4. End-to-end scripted mission ------------------------------------------
     harness = EvaluationHarness()
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"
     mission_timings: list[float] = []
     for _ in range(40):
         specialists = harness.scripted_specialists(

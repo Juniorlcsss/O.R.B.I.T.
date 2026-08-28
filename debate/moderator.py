@@ -11,7 +11,11 @@ logic is deliberately boring and unit-testable without any model call:
   (hold_and_rescreen is exempt: its target *is* the current miss).
 * **Loop detection** — SHA-256 over each argument's canonical form; a
   verbatim repeat by the same strategist freezes that agent for the rest
-  of the debate (STALLED flag).
+  of the debate (STALLED flag). Freezing stops it being *asked* again; it
+  does not void the proposal, which already passed every check above.
+  When the last surviving strategists all restate in the same round the
+  debate has SETTLED, and their positions go to the judge — three voices
+  holding firm under critique is a panel concluding, not failing.
 * **Budgets** — MAX_DEBATE_ROUNDS critique rounds plus a wall-clock cap;
   exceeding either stops the debate cleanly.
 * **Convergence** — identical strategy AND delta-v within epsilon ends the
@@ -37,12 +41,13 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Final
 
 from google.adk.agents.base_agent import BaseAgent
+from google.adk.agents.llm_agent import LlmAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.genai import types
 from pydantic import ConfigDict
 
-from agents.safety import MAX_ALLOWED_DELTA_V_MPS
+from geap_sim.safety_limits import MAX_ALLOWED_DELTA_V_MPS
 from evolution.policy import EVOLUTION_ENVELOPE, PolicyStore, get_shared_policy_store
 from geap_sim.memory_bank import MemoryBank, get_shared_memory_bank
 from geap_sim.observability import audit_logger
@@ -193,6 +198,36 @@ def _utc_now_iso() -> str:
 # ---------------------------------------------------------------------------
 
 
+
+def _strategists_offline() -> bool:
+    """True when strategists must not touch the network.
+
+    The evaluation suite advertises itself as hermetic — "no network, no
+    credentials, no cost" — but for the debate that was only ever *accidentally*
+    true: the three strategists are real ``LlmAgent`` instances, and full-pipeline
+    tests wire the real moderator. They stayed offline purely because no
+    credentials happened to be present, which had two costs.
+
+    First, on any machine that exports ``GOOGLE_APPLICATION_CREDENTIALS``
+    globally the suite would silently stop being hermetic: eighteen debates
+    would go live, turning a fast deterministic run into a slow, billable and
+    non-reproducible one, with no signal that anything had changed.
+
+    Second, the failure it did produce was indistinguishable from a real
+    outage. Every hermetic run logged fifty-four ``STRATEGIST_UNAVAILABLE``
+    ALERTs reading "No API key was provided", which is precisely the message
+    a genuinely misconfigured *deployment* emits. A passing suite that prints
+    fifty-four production-shaped alerts trains readers to ignore them, and it
+    sent a real investigation after a Vertex AI routing bug that did not exist.
+
+    Setting ``ORBIT_OFFLINE_STRATEGISTS=1`` makes the degradation deliberate
+    and self-describing instead. The debate still takes its documented fallback
+    path — that path deserves the coverage — but it does so by decision rather
+    than by absence, and says so in the audit trail.
+    """
+    return os.environ.get("ORBIT_OFFLINE_STRATEGISTS", "").strip().lower() in {"1", "true", "yes"}
+
+
 class DebateModerator(BaseAgent):
     """Deterministic referee for the three-strategist maneuver debate."""
 
@@ -229,6 +264,20 @@ class DebateModerator(BaseAgent):
             content=types.Content(role="user", parts=[types.Part(text=prompt)]),
         )
         collected.append(prompt_event)
+
+        # Hermetic runs skip the provider entirely. Scoped to LlmAgent so the
+        # scripted strategists the debate tests inject still execute — the flag
+        # silences the network, not the debate.
+        if _strategists_offline() and isinstance(agent, LlmAgent):
+            audit_logger.log_event(
+                trace_id=str(ctx.session.state.get("orbit_trace_id", "debate")),
+                agent_name=agent.name,
+                event_type="STRATEGIST_OFFLINE",
+                payload={"agent": agent.name, "reason": "ORBIT_OFFLINE_STRATEGISTS set; hermetic run"},
+                status="SIMULATED",
+            )
+            return None, collected
+
         try:
             async for event in agent.run_async(ctx):
                 collected.append(event)
@@ -241,6 +290,20 @@ class DebateModerator(BaseAgent):
                 status="DEGRADED",
             )
         raw = ctx.session.state.get(output_key, "")
+        if not raw:
+            # ADK's LlmAgent publishes ``output_key`` through
+            # ``EventActions.state_delta``, and the Runner applies that delta
+            # only once the event has been yielded up to it. This moderator
+            # buffers a whole round's events before yielding, so at this point
+            # the session state is still empty even though the model answered
+            # perfectly. Read the delta straight off the collected events.
+            for event in reversed(collected):
+                delta = getattr(getattr(event, "actions", None), "state_delta", None) or {}
+                candidate = delta.get(output_key)
+                if candidate:
+                    raw = candidate
+                    ctx.session.state[output_key] = candidate
+                    break
         parsed = _safe_json(raw)
         return (parsed if isinstance(parsed, dict) else None), collected
 
@@ -255,7 +318,37 @@ class DebateModerator(BaseAgent):
         """Invoke all surviving strategists for one round, concurrently."""
 
         async def one(agent: BaseAgent, key: str) -> tuple[BaseAgent, str, dict[str, Any] | None, list[Event]]:
-            persona_line = next((p for p in prior_arguments if p.get("strategist") == agent.name), None)
+            mine = [p for p in prior_arguments if p.get("strategist") == agent.name]
+            theirs = [p for p in prior_arguments if p.get("strategist") != agent.name]
+
+            # The critique round used to say "revise your position in light of
+            # the critiques" while supplying no critiques at all — only a flat
+            # list of everyone's proposals, with no indication of what was
+            # contested or what a strategist was expected to do differently.
+            # Asked the same question twice with nothing new to answer, a
+            # strategist emits the same answer, which the repetition detector
+            # then reports as a loop. Name the disagreement, and say explicitly
+            # that holding firm is a legitimate answer that must be *argued*
+            # rather than restated, so a genuine stall stays distinguishable
+            # from a considered one.
+            critique_block = ""
+            if round_index > 0 and mine and theirs:
+                last_mine = mine[-1]
+                spread = [
+                    f"- {p['strategist']} argues {p['strategy']} at {p['delta_v_mps']:.2f} m/s: {p['rationale']}"
+                    for p in theirs
+                ]
+                critique_block = (
+                    "\n\nYOU PREVIOUSLY ARGUED: "
+                    f"{last_mine['strategy']} at {last_mine['delta_v_mps']:.2f} m/s — {last_mine['rationale']}"
+                    "\n\nTHE OTHER STRATEGISTS DISAGREE:\n" + "\n".join(spread)
+                    + "\n\nAnswer them directly. Either move your position and say what "
+                    "changed your mind, or hold it and give the specific reason their "
+                    "argument fails. Do not restate your previous rationale unchanged: "
+                    "if you have nothing to add, say so in a new sentence that explains "
+                    "why their objection does not move you."
+                )
+
             prompt = (
                 f"SCENARIO:\n{json.dumps(scenario)}\n\n"
                 f"CURRENT SCREENING POLICY:\n{json.dumps(await self._policy_dump())}\n\n"
@@ -265,11 +358,7 @@ class DebateModerator(BaseAgent):
                     if prior_arguments
                     else "This is the opening round; state your position."
                 )
-                + (
-                    "\n\nRevise your own earlier position in light of the critiques."
-                    if round_index > 0 and persona_line
-                    else ""
-                )
+                + critique_block
             )
             payload, events = await self._ask_strategist(ctx, agent, prompt, key)
             return agent, key, payload, events
@@ -304,8 +393,13 @@ class DebateModerator(BaseAgent):
         def budget_left() -> bool:
             return (time.monotonic() - started_monotonic) < TIME_BUDGET_SECONDS
 
+        # Flags report the round they happened in. This used to be len(rounds),
+        # the number of arguments accumulated so far, which is why a debate
+        # capped at 2 critique rounds emitted flags labelled "round": 5.
+        current_round = 0
+
         def note_flag(code: str, detail: str, severity: str = "WARNING") -> None:
-            entry = {"code": code, "severity": severity, "detail": detail[:240], "round": len(rounds)}
+            entry = {"code": code, "severity": severity, "detail": detail[:240], "round": current_round}
             flags.append(entry)
             audit_logger.log_event(
                 trace_id=trace_id, agent_name=self.name,
@@ -320,6 +414,9 @@ class DebateModerator(BaseAgent):
             (self.reassess, "orbit_debate_reassess"),
         ]
         survivors: dict[str, ManeuverProposal] = {}
+        #: Validated proposals from strategists frozen for restating their
+        #: position. Held so a settled debate can still be adjudicated.
+        settled: dict[str, ManeuverProposal] = {}
 
         scenario = {
             "sat_id": sat_id,
@@ -339,6 +436,7 @@ class DebateModerator(BaseAgent):
                 budget_exceeded = True
                 break
 
+            current_round = round_index
             active = [(a, k) for a, k in roster if a.name not in frozen_agents]
             results = await self._run_round(ctx, active, round_index, scenario, prior_arguments)
             for events in (r[3] for r in results):
@@ -359,6 +457,12 @@ class DebateModerator(BaseAgent):
                 if verbatim_repeat:
                     frozen_agents.add(agent.name)
                     survivors.pop(agent.name, None)
+                    # Keep the restated proposal aside. Repetition means this
+                    # strategist has stopped moving, which is a reason to stop
+                    # *asking* it — not a reason to throw away an argument that
+                    # passed every validation check.
+                    if proposal is not None:
+                        settled[agent.name] = proposal
                     note_flag("STALLED", f"{agent.name} repeated a verbatim argument; frozen for the remainder", "WARNING")
 
                 for vf in vflags:
@@ -385,6 +489,25 @@ class DebateModerator(BaseAgent):
                 for a in rounds
             ]
 
+            # ---- Every voice has settled -------------------------------------
+            # When the LAST surviving strategists all restate their positions in
+            # the same round, the pool empties and the debate used to fall
+            # straight through to the single-specialist fallback — discarding
+            # three fully validated proposals and reporting a failure.
+            #
+            # That is backwards. Three strategists holding firm under critique
+            # is the debate reaching its conclusion, not breaking down. The
+            # freeze still applies (nobody is asked again, so the loop cannot
+            # burn the budget), but the arguments they settled on go to the
+            # judge, which is what they were produced for.
+            if not survivors and settled:
+                survivors.update(settled)
+                note_flag(
+                    "SETTLED",
+                    "every remaining strategist restated its position; adjudicating on the settled proposals",
+                    "NOTICE",
+                )
+
             # ---- Convergence check ------------------------------------------
             burns = [p for p in survivors.values() if p.strategy != "hold_and_rescreen"]
             holds = [p for p in survivors.values() if p.strategy == "hold_and_rescreen"]
@@ -402,7 +525,15 @@ class DebateModerator(BaseAgent):
                     )
                     break
 
-            if round_index >= MAX_DEBATE_ROUNDS or budget_exceeded or not budget_left():
+            if (
+                round_index >= MAX_DEBATE_ROUNDS
+                or budget_exceeded
+                or not budget_left()
+                # Every strategist frozen means the next round would invoke
+                # nobody and change nothing; spending a round to discover that
+                # is pure latency on the critical path of a HIGH-risk mission.
+                or len(frozen_agents) >= len(roster)
+            ):
                 break
 
         # ---- Judge: only when several valid proposals remain unconverged -------
@@ -422,10 +553,17 @@ class DebateModerator(BaseAgent):
             )
             ctx.session.state["orbit_debate_judge"] = ""
             judge_answer: dict[str, Any] | None = None
+            judge_raw = ""
             try:
                 async for event in self.debate_judge.run_async(ctx):
+                    # Same state_delta caveat as the strategists: capture the
+                    # verdict off the event rather than trusting that the
+                    # Runner has committed it by the time we read state.
+                    delta = getattr(getattr(event, "actions", None), "state_delta", None) or {}
+                    judge_raw = delta.get("orbit_debate_judge") or judge_raw
                     yield event
-                judge_answer = _safe_json(ctx.session.state.get("orbit_debate_judge", ""))
+                judge_raw = ctx.session.state.get("orbit_debate_judge", "") or judge_raw
+                judge_answer = _safe_json(judge_raw)
             except Exception as exc:  # noqa: BLE001 — judge outage → fallback path
                 note_flag("JUDGE_UNAVAILABLE", f"{type(exc).__name__}: {exc}", "WARNING")
             chosen = str((judge_answer or {}).get("winner", "")).strip()

@@ -26,16 +26,19 @@ from typing import Final
 
 from google.adk.agents import LlmAgent
 from google.genai import types
+from geap_sim.model_config import structured_json_config
+from geap_sim.safety_limits import MAX_ALLOWED_DELTA_V_MPS, SIGNATURE_MIN_HEX_CHARS
 
 AGENT_NAME: Final[str] = "safety_officer"
 
-#: Single source of truth for the fleet delta-v ceiling; also imported by the
-#: deterministic ``geap_sim.model_armor`` middleware so prompt and code can
-#: never drift apart.
-MAX_ALLOWED_DELTA_V_MPS: Final[float] = 50.0
-
-#: Minimum accepted length of a hexadecimal command signature.
-SIGNATURE_MIN_HEX_CHARS: Final[int] = 64
+#: Session-state slot this agent's verdict lands in. The FleetCommander reads
+#: the verdict back from ``ctx.session.state[VERDICT_OUTPUT_KEY]`` after the
+#: invocation, so without ``output_key`` wired to the same constant the slot
+#: stays empty, the verdict parses as ``{}``, and the officer is reported as
+#: having violated its own schema on every attempt — three times, then a
+#: tripped breaker. Mirrors ``VERDICT_OUTPUT_KEY`` in ``agents.orchestrator``;
+#: the orchestrator imports this name rather than repeating the literal.
+OUTPUT_KEY: Final[str] = "orbit_armor_verdict"
 
 VIOLATION_CODES: Final[tuple[str, ...]] = (
     "DELTA_V_EXCEEDS_CEILING",
@@ -53,8 +56,7 @@ _MODEL_ID = os.environ.get("ORBIT_VERTEX_MODEL_ID", "gemini-3.5-flash")
 
 _SYSTEM_INSTRUCTION: Final[str] = f"""ROLE
 You are the SafetyOfficerAgent of Project O.R.B.I.T. — the "Model Armour"
-terminal checkpoint guarding a fleet of university CubeSats in low Earth
-orbit. Every proposed action, manoeuvre request or outbound transmission
+terminal checkpoint guarding the operated spacecraft in low Earth orbit. Every proposed action, manoeuvre request or outbound transmission
 that reaches you MUST be audited before it may be executed. You have no
 tools and no authority to act: your sole output is a verdict.
 
@@ -112,16 +114,17 @@ safety_officer_agent = LlmAgent(
         "externally visible action through this agent BEFORE execution."
     ),
     instruction=_SYSTEM_INSTRUCTION,
-    generate_content_config=types.GenerateContentConfig(
+    generate_content_config=structured_json_config(
+        answer_tokens=768,
         temperature=0.0,
-        max_output_tokens=768,
-        response_mime_type="application/json",
     ),
+    output_key=OUTPUT_KEY,
 )
 
 __all__ = [
     "AGENT_NAME",
     "MAX_ALLOWED_DELTA_V_MPS",
+    "OUTPUT_KEY",
     "SAFETY_OFFICER_AGENT",
     "SIGNATURE_MIN_HEX_CHARS",
     "VIOLATION_CODES",

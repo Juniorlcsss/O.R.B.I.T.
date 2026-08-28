@@ -14,10 +14,11 @@ exactly ONE tool to make the split-second call its system prompt demands:
 Production model note
 ---------------------
 The LLM is Gemma served from Vertex AI (Model Garden open-model endpoint),
-selected via ``ORBIT_EDGE_MODEL_ID`` (default ``gemma-3-27b-it``). In
+selected via ``ORBIT_EDGE_MODEL_ID`` (default ``gemma-4-26b-a4b-it-maas``,
+served from the Vertex AI ``global`` endpoint). In
 production this maps to a Vertex AI endpoint such as::
 
-    projects/{project}/locations/{location}/endpoints/gemma-3-27b-it
+    projects/{project}/locations/{location}/endpoints/gemma-4-26b-a4b-it-maas
 
 ADK resolves the model string through the standard google-genai client,
 exactly like every other specialist in the fleet; only the model family
@@ -54,7 +55,7 @@ AGENT_NAME: Final[str] = "gemma_edge_autopilot"
 OUTPUT_KEY: Final[str] = "orbit_edge_decision"
 
 #: Gemma on Vertex AI — small, quantised, radiation-tolerant enough for the story.
-_MODEL_ID = os.environ.get("ORBIT_EDGE_MODEL_ID", "gemma-3-27b-it")
+_MODEL_ID = os.environ.get("ORBIT_EDGE_MODEL_ID", "gemma-4-26b-a4b-it-maas")
 
 #: The number in the onboard rulebook: act only above this collision
 #: probability. Deliberately ~10x more conservative than the ground HIGH

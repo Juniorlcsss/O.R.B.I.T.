@@ -62,9 +62,11 @@ from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.invocation_context import InvocationContext
 from google.adk.events import Event, EventActions
 from google.genai import types
+from geap_sim.model_config import structured_json_config
 from pydantic import ConfigDict
 
 from geap_sim.agent_registry import get_shared_registry
+from geap_sim.command_signing import sign_maneuver_command
 from geap_sim.memory_bank import MemoryBank, estimate_fuel_after_burn, get_shared_memory_bank, safe_document_id
 from geap_sim.model_armor import ModelArmor, get_shared_model_armor
 from geap_sim.observability import audit_logger
@@ -82,7 +84,11 @@ from .edge_agent import (
     gemma_edge_agent,
     validate_edge_decision,
 )
-from .safety import MAX_ALLOWED_DELTA_V_MPS, safety_officer_agent
+from .safety import (
+    MAX_ALLOWED_DELTA_V_MPS,
+    OUTPUT_KEY as VERDICT_OUTPUT_KEY,
+    safety_officer_agent,
+)
 from .watcher import watcher_agent
 from tools.debrief_generator import generate_and_store_debrief
 
@@ -94,7 +100,7 @@ AGENT_NAME: Final[str] = "fleet_commander"
 
 #: Gemini 2.5 Pro powers alert triage — the one step where judgment over
 #: messy, malformed real-world tracking data pays for itself.
-_TRIAGE_MODEL_ID = os.environ.get("ORBIT_COMMANDER_MODEL_ID", "gemini-2.5-pro")
+_TRIAGE_MODEL_ID = os.environ.get("ORBIT_COMMANDER_MODEL_ID", "gemini-3.7-flash")
 
 # Circuit-breaker policy.
 BREAKER_MAX_ATTEMPTS: Final[int] = 3
@@ -108,11 +114,15 @@ STATE_CIRCUIT_BREAKERS: Final[str] = "orbit_circuit_breakers"
 STATE_EXECUTION_DECISION: Final[str] = "orbit_execution_decision"
 STATE_HUMAN_DISPATCH: Final[str] = "orbit_human_dispatch_payload"
 STATE_FINAL_STATUS: Final[str] = "orbit_final_status"
+#: The signed manoeuvre command submitted to the safety checkpoint.
+STATE_SIGNED_COMMAND: Final[str] = "orbit_signed_command"
 
 TRIAGE_OUTPUT_KEY: Final[str] = "orbit_alert_triage"
 SCREENING_OUTPUT_KEY: Final[str] = "orbit_screening"
 NEGOTIATION_OUTPUT_KEY: Final[str] = "orbit_negotiation"
-VERDICT_OUTPUT_KEY: Final[str] = "orbit_armor_verdict"
+# VERDICT_OUTPUT_KEY is imported from agents.safety, not redeclared: the
+# officer must WRITE to the same slot the commander READS, and two copies
+# of the literal is exactly how they came apart.
 
 # Terminal mission statuses.
 STATUS_EXECUTION_AUTHORIZED: Final[str] = "EXECUTION_AUTHORIZED"
@@ -286,10 +296,9 @@ alert_triage_agent = LlmAgent(
         "into a validated mission dossier before any specialist is engaged."
     ),
     instruction=_TRIAGE_INSTRUCTION,
-    generate_content_config=types.GenerateContentConfig(
+    generate_content_config=structured_json_config(
+        answer_tokens=512,
         temperature=0.1,
-        max_output_tokens=512,
-        response_mime_type="application/json",
     ),
     output_key=TRIAGE_OUTPUT_KEY,
 )
@@ -381,14 +390,89 @@ class FleetCommanderPipeline(BaseAgent):
         log.append({"timestamp_utc": _utc_now_iso(), "level": level, "source": source, "message": message, "data": data})
         ctx.session.state[STATE_OBSERVABILITY_LOG] = log
 
+    def _emit_coordination_request(
+        self,
+        ctx: InvocationContext,
+        *,
+        dossier: dict[str, Any],
+        screening: dict[str, Any],
+        requested_delta_v_mps: float,
+    ) -> dict[str, Any]:
+        """Produce the operator-to-operator coordination artifact for a standoff.
+
+        There is no machine protocol to settle this, so the channel is
+        ``human``: O.R.B.I.T. hands the operator a CCSDS-CDM-shaped message
+        and a ready-to-send request rather than claiming an agreement that
+        does not exist. Persisted onto the audit stream so it can be
+        retrieved later by trace ID.
+        """
+        from tools.coordination import build_coordination_request
+        from tools.space_tools import catalog_identity
+
+        trace_id = str(ctx.session.state.get(STATE_TRACE_ID, ""))
+        primary = catalog_identity(str(dossier.get("sat_id", "")))
+        secondary = catalog_identity(str(dossier.get("debris_id", "")))
+
+        # Uncontrolled debris has no operator and cannot manoeuvre
+        if not secondary.get("manoeuvrable", False):
+            not_applicable = {
+                "message_id": None,
+                "channel": "not_applicable",
+                "reason": "COUNTERPARTY_IS_UNCONTROLLED_DEBRIS",
+                "detail": (
+                    f"{secondary.get('name', secondary.get('id'))} is uncontrolled debris: "
+                    "there is no operator to coordinate with and it cannot manoeuvre. "
+                    "Avoidance must be unilateral."
+                ),
+                "secondary": secondary,
+                "awaiting_reply": False,
+            }
+            audit_logger.log_event(
+                trace_id=trace_id,
+                agent_name=self.name,
+                event_type="COORDINATION_NOT_APPLICABLE",
+                payload=not_applicable,
+                status="UNILATERAL_ACTION_REQUIRED",
+            )
+            return not_applicable
+
+        artifact = build_coordination_request(
+            primary=primary,
+            secondary=secondary,
+            screening=screening,
+            requested_action="counterparty_manoeuvre",
+            requested_delta_v_mps=requested_delta_v_mps,
+            channel="human",
+        )
+        audit_logger.log_event(
+            trace_id=trace_id,
+            agent_name=self.name,
+            event_type="COORDINATION_REQUEST_EMITTED",
+            payload=artifact,
+            status="AWAITING_COUNTERPARTY",
+        )
+        return artifact
+
     def _set_breaker(self, ctx: InvocationContext, name: str, status: str, failures: int) -> None:
         breakers: dict[str, Any] = ctx.session.state.get(STATE_CIRCUIT_BREAKERS, {})
+        previous = (breakers.get(name) or {}).get("status")
         breakers[name] = {
             "status": status,
             "consecutive_failures": failures,
             "updated_utc": _utc_now_iso(),
         }
         ctx.session.state[STATE_CIRCUIT_BREAKERS] = breakers
+        # Breaker state lived only in session state, so the dashboard could
+        # never show it. Mirror transitions onto the audit stream, which is
+        # process-wide and already streamed to the Command Center over SSE.
+        if previous != status:
+            audit_logger.log_event(
+                trace_id=str(ctx.session.state.get(STATE_TRACE_ID, "")),
+                agent_name=name,
+                event_type="CIRCUIT_BREAKER_STATE",
+                payload={"status": status, "consecutive_failures": failures},
+                status=status.upper(),
+            )
 
     def _finish(self, ctx: InvocationContext, status: str) -> Event:
         """Commit the terminal mission state via event state-delta.
@@ -448,6 +532,13 @@ class FleetCommanderPipeline(BaseAgent):
         """
         for attempt in range(1, BREAKER_MAX_ATTEMPTS + 1):
             failure_reason: str | None = None
+            audit_logger.log_event(
+                trace_id=str(ctx.session.state.get(STATE_TRACE_ID, "")),
+                agent_name=agent.name,
+                event_type="AGENT_INVOCATION",
+                payload={"attempt": attempt, "state_key": state_key},
+                status="RUNNING",
+            )
             try:
                 async for event in agent.run_async(ctx):
                     yield event
@@ -465,10 +556,24 @@ class FleetCommanderPipeline(BaseAgent):
                     ctx.session.state[f"{state_key}:parsed"] = payload
                     ctx.session.state[f"{state_key}:ok"] = True
                     self._set_breaker(ctx, agent.name, "healthy", 0)
+                    audit_logger.log_event(
+                        trace_id=str(ctx.session.state.get(STATE_TRACE_ID, "")),
+                        agent_name=agent.name,
+                        event_type="AGENT_INVOCATION",
+                        payload={"attempt": attempt, "state_key": state_key},
+                        status="OK",
+                    )
                     self._log_observation(ctx, "INFO", agent.name, f"{agent.name} responded within schema (attempt {attempt}).")
                     return
 
             self._log_observation(ctx, "WARN", agent.name, f"{agent.name} attempt {attempt} failed.", reason=failure_reason)
+            audit_logger.log_event(
+                trace_id=str(ctx.session.state.get(STATE_TRACE_ID, "")),
+                agent_name=agent.name,
+                event_type="AGENT_INVOCATION",
+                payload={"attempt": attempt, "state_key": state_key, "reason": (failure_reason or "")[:200]},
+                status="FAILED",
+            )
             tripped = attempt >= BREAKER_MAX_ATTEMPTS
             previous = int((ctx.session.state.get(STATE_CIRCUIT_BREAKERS, {}).get(agent.name, {}) or {}).get("consecutive_failures", 0))
             self._set_breaker(ctx, agent.name, "tripped" if tripped else "retrying", previous + 1)
@@ -741,9 +846,11 @@ class FleetCommanderPipeline(BaseAgent):
             yield self._finish(ctx, STATUS_HUMAN_DISPATCH)
             return
 
+        from tools.space_tools import resolve_object_key
+
         dossier: dict[str, Any] = {
-            "sat_id": triage.get("sat_id"),
-            "debris_id": triage.get("debris_id"),
+            "sat_id": resolve_object_key(triage.get("sat_id")),
+            "debris_id": resolve_object_key(triage.get("debris_id")),
             "our_fuel_percent_remaining": triage.get("our_fuel_percent_remaining"),
             "urgency": triage.get("urgency", "ROUTINE"),
         }
@@ -844,8 +951,59 @@ class FleetCommanderPipeline(BaseAgent):
             else:
                 yield self._status_event("Debate unavailable — continuing with the classic single-specialist path.")
 
-        async for event in self._guarded_invoke(ctx, agent=self.negotiation_officer, state_key=NEGOTIATION_OUTPUT_KEY, validator=_validate_negotiation):
-            yield event
+        from tools.space_tools import catalog_identity as _catalog_identity
+
+        counterparty = _catalog_identity(str(dossier.get("debris_id", "")))
+        counterparty_can_manoeuvre = bool(counterparty.get("manoeuvrable", False))
+
+        if not counterparty_can_manoeuvre:
+            our_dv = float(
+                (debate_payload or {}).get("our_dv_mps")
+                or screening.get("recommended_dv_mps")
+                or 0.0
+            )
+            negotiation_skipped = {
+                "action": "we_dodge",
+                "our_dv_mps": our_dv,
+                "their_dv_mps": 0.0,
+                # No counterparty acknowledged, so there is no MAC to carry.
+                # Fabricating one would forge consent that was never given.
+                "ack_signature": "",
+                "reasoning": (
+                    f"{counterparty.get('name', counterparty.get('id'))} is uncontrolled "
+                    f"{counterparty.get('kind', 'debris')} with no operator and no propulsion. "
+                    "No coordination is possible; avoidance is unilateral by construction."
+                ),
+                "counterparty_manoeuvrable": False,
+                "negotiation_skipped": True,
+            }
+            ctx.session.state[f"{NEGOTIATION_OUTPUT_KEY}:parsed"] = negotiation_skipped
+            ctx.session.state[f"{NEGOTIATION_OUTPUT_KEY}:ok"] = True
+            audit_logger.log_event(
+                trace_id=trace_id,
+                agent_name=self.name,
+                event_type="NEGOTIATION_SKIPPED",
+                payload={
+                    "counterparty": counterparty.get("id"),
+                    "counterparty_kind": counterparty.get("kind"),
+                    "reason": "COUNTERPARTY_CANNOT_MANOEUVRE",
+                    "our_dv_mps": our_dv,
+                },
+                status="UNILATERAL_ACTION_REQUIRED",
+            )
+            self._log_observation(
+                ctx,
+                "INFO",
+                self.name,
+                f"Negotiation skipped: {counterparty.get('id')} cannot manoeuvre. Unilateral avoidance.",
+            )
+            yield self._status_event(
+                f"Counterparty is uncontrolled {counterparty.get('kind', 'debris')} — "
+                "no operator to negotiate with. Proceeding to unilateral avoidance."
+            )
+        else:
+            async for event in self._guarded_invoke(ctx, agent=self.negotiation_officer, state_key=NEGOTIATION_OUTPUT_KEY, validator=_validate_negotiation):
+                yield event
         if not ctx.session.state.get(f"{NEGOTIATION_OUTPUT_KEY}:ok"):
             # Ground pipeline cannot finish a HIGH-risk response — the
             # flight analogue of losing downlink mid-incident. Triage and
@@ -871,19 +1029,59 @@ class FleetCommanderPipeline(BaseAgent):
 
         if negotiation["action"] == "standoff":
             # A HIGH-risk conjunction nobody will move is a human problem NOW.
+            coordination = self._emit_coordination_request(
+                ctx,
+                dossier=dossier,
+                screening=screening,
+                requested_delta_v_mps=float(negotiation.get("our_dv_mps") or screening.get("recommended_dv_mps") or 0.0),
+            )
             self._open_human_dispatch(
                 ctx,
                 "Negotiation ended in STANDOFF on a HIGH-risk conjunction; operator arbitration required.",
                 negotiation=negotiation,
+                coordination_request=coordination,
             )
-            decision = {"decision": STATUS_STANDOFF_DISPATCH, "negotiated_action": negotiation}
+            decision = {
+                "decision": STATUS_STANDOFF_DISPATCH,
+                "negotiated_action": negotiation,
+                "coordination_request": coordination,
+            }
             ctx.session.state[STATE_EXECUTION_DECISION] = decision
             yield self._status_event("STANDOFF on HIGH risk — escalating to human operator.")
             yield self._finish(ctx, STATUS_STANDOFF_DISPATCH)
             return
 
+        signed_command = sign_maneuver_command(
+            {
+                "sat_id": dossier.get("sat_id"),
+                "debris_id": dossier.get("debris_id"),
+                "action": negotiation.get("action"),
+                "dv_direction": screening.get("dv_direction"),
+                "our_dv_mps": _coerce_number(negotiation.get("our_dv_mps")) or 0.0,
+                "tca_iso": screening.get("tca_iso"),
+                "conjunction_id": safe_document_id(
+                    f"{str(dossier['sat_id']).upper()}-X-{dossier['debris_id']}-TCA-{screening['tca_iso']}"
+                ),
+            }
+        )
+        ctx.session.state[STATE_SIGNED_COMMAND] = signed_command
+        audit_logger.log_event(
+            trace_id=trace_id,
+            agent_name=self.name,
+            event_type="MANEUVER_COMMAND_SIGNED",
+            payload={
+                "conjunction_id": signed_command["conjunction_id"],
+                "signing_algorithm": signed_command["signing_algorithm"],
+                "key_source": signed_command["key_source"],
+                "signed_fields": signed_command["signed_fields"],
+            },
+            status="SIGNED",
+        )
+
         yield self._status_event(f"Negotiation resolved: {negotiation['action']}. Routing proposed manoeuvre through the LLM Safety Officer…")
-        yield self._dossier_event({**dossier, "negotiated_action": negotiation})
+        yield self._dossier_event(
+            {**dossier, "negotiated_action": negotiation, "proposed_command": signed_command}
+        )
         async for event in self._guarded_invoke(ctx, agent=self.model_armor_checkpoint, state_key=VERDICT_OUTPUT_KEY, validator=_validate_verdict):
             yield event
         armor_ok = bool(ctx.session.state.get(f"{VERDICT_OUTPUT_KEY}:ok"))
@@ -1132,6 +1330,8 @@ def _attest_tool_scopes() -> None:
         ("negotiation_officer", "screen_conjunction"),
         ("safety_officer", "get_tle_data"),
         ("fleet_commander", "screen_conjunction"),
+        ("fleet_admiral", "screen_conjunction"),
+        ("fleet_admiral", "negotiate_dodge_maneuver"),
         ("gemma_edge_autopilot", "screen_conjunction"),
         ("gemma_edge_autopilot", "get_tle_data"),
         ("watch_commander", "screen_conjunction"),

@@ -52,7 +52,7 @@ IS_DESTRUCTIVE = True
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"
     original_backoff = orchestrator_module.BREAKER_BACKOFF_SECONDS
     orchestrator_module.BREAKER_BACKOFF_SECONDS = (0.01, 0.01, 0.01)
 

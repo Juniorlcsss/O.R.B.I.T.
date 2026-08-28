@@ -1,4 +1,4 @@
-"""Evolution â€” the EvolutionEngine (self-modification control plane).
+"""Evolution — the EvolutionEngine (self-modification control plane).
 
 A custom ADK ``BaseAgent`` in exactly the same style as
 ``FleetCommanderPipeline``: deterministic code owns every decision, LLMs do
@@ -7,15 +7,15 @@ validated, gated and clamped.
 
 Per-cycle flow (fail-closed at every stage):
 
-    CYCLE_START â†’ gather outcomes â†’ skip if thin â†’ load policy & history
-    â†’ frozen? stop â†’ analyst proposes (or NO_CHANGE) â†’ deterministic gaming
-    flags â†’ Meta-Critic verdict â†’ REJECT on CRITICAL flag / REJECT verdict /
-    suspicion â‰¥ 0.7 â†’ freeze after repeated failures â†’ candidate policy
-    â†’ clamp_to_envelope (ALWAYS) â†’ validate invariants â†’ save â†’ log cycle
-    â†’ CYCLE_APPLIED â†’ EvolutionReport.
+    CYCLE_START → gather outcomes → skip if thin → load policy & history
+    → frozen? stop → analyst proposes (or NO_CHANGE) → deterministic gaming
+    flags → Meta-Critic verdict → REJECT on CRITICAL flag / REJECT verdict /
+    suspicion ≥ 0.7 → freeze after repeated failures → candidate policy
+    → clamp_to_envelope (ALWAYS) → validate invariants → save → log cycle
+    → CYCLE_APPLIED → EvolutionReport.
 
 The two specialist slots are plain ``BaseAgent`` fields so evaluation
-harnesses can substitute scripted stand-ins with identical contracts â€”
+harnesses can substitute scripted stand-ins with identical contracts —
 the same trick the Phase 9 suite uses for the mission pipeline.
 """
 
@@ -185,7 +185,7 @@ class EvolutionEngine(BaseAgent):
         try:
             tunables = {name: fields[name] for name in EVOLUTION_ENVELOPE if name in fields}
             return ScreeningPolicy(**tunables, provenance="evolved")
-        except Exception:  # noqa: BLE001 â€” any malformed field invalidates the whole proposal
+        except Exception:  # noqa: BLE001 — any malformed field invalidates the whole proposal
             return None
 
     @staticmethod
@@ -194,7 +194,7 @@ class EvolutionEngine(BaseAgent):
         for name in EVOLUTION_ENVELOPE:
             old_value, new_value = float(getattr(before, name)), float(getattr(after, name))
             if abs(old_value - new_value) > abs(EVOLUTION_ENVELOPE[name][1] - EVOLUTION_ENVELOPE[name][0]) * 1e-9:
-                lines.append(f"{name}: {old_value:.6g} â†’ {new_value:.6g}")
+                lines.append(f"{name}: {old_value:.6g} → {new_value:.6g}")
         return lines or ["(no parameter changes)"]
 
     # -- control flow -------------------------------------------------------------
@@ -238,7 +238,7 @@ class EvolutionEngine(BaseAgent):
                 rejection_counter=rejections, frozen=True,
             )
             yield await self._commit(ctx, report)
-            yield self._status_event("Evolution is FROZEN â€” human review required.")
+            yield self._status_event("Evolution is FROZEN — human review required.")
             return
 
         # ---- Step 7: proposal ---------------------------------------------------
@@ -247,19 +247,37 @@ class EvolutionEngine(BaseAgent):
             "\n\nRECENT MISSION OUTCOMES (newest first):\n" + json.dumps(outcomes, default=str) +
             "\n\nPropose the next ScreeningPolicy adjustment per your rules."
         )
-        async for _ in self._invoke_specialist(ctx, agent=self.learning_analyst, prompt_text=proposal_prompt, output_key=PROPOSAL_OUTPUT_KEY, trace_id=trace_id):
-            pass
-        proposal_payload: dict[str, Any] | None = _extract_json(ctx.session.state.get(PROPOSAL_OUTPUT_KEY, "")) or None
+        # These events MUST be re-yielded, not swallowed. ADK delivers an
+        # agent's ``output_key`` as an ``EventActions.state_delta`` on its
+        # final event, and only the Runner applies that delta to the session.
+        # Consuming the events here with ``pass`` meant the delta never
+        # reached the Runner, so the proposal slot stayed empty on every
+        # cycle and the engine reported ANALYST_UNAVAILABLE — while the
+        # analyst itself was answering perfectly.
+        async for event in self._invoke_specialist(ctx, agent=self.learning_analyst, prompt_text=proposal_prompt, output_key=PROPOSAL_OUTPUT_KEY, trace_id=trace_id):
+            yield event
+        proposal_raw = ctx.session.state.get(PROPOSAL_OUTPUT_KEY, "")
+        proposal_payload: dict[str, Any] | None = _extract_json(proposal_raw) or None
 
         if proposal_payload is None:
+            raw_text = proposal_raw if isinstance(proposal_raw, str) else repr(proposal_raw)
             audit_logger.log_event(
                 trace_id=trace_id, agent_name=self.name, event_type="ANALYST_UNAVAILABLE",
-                payload={}, status="DEGRADED",
+                payload={
+                    "reason": (
+                        "no response — provider unreachable or invocation failed"
+                        if not raw_text
+                        else "response present but no JSON object could be extracted"
+                    ),
+                    "raw_length": len(raw_text),
+                    "raw_preview": raw_text[:300],
+                },
+                status="DEGRADED",
             )
             report = EvolutionReport(status=_STATUS_NO_CHANGE, trace_id=trace_id,
                                      reasoning="learning analyst produced no parsable proposal (fail-closed)")
             yield await self._commit(ctx, report)
-            yield self._status_event("Analyst unavailable â€” no change proposed.")
+            yield self._status_event("Analyst unavailable — no change proposed.")
             return
 
         confidence = float(proposal_payload.get("confidence") or 0.0)
@@ -290,12 +308,14 @@ class EvolutionEngine(BaseAgent):
             "\n\nDETERMINISTIC GAMING FLAGS:\n" + json.dumps([f.model_dump() for f in gaming_flags], default=str) +
             "\n\nDeliver your adversarial verdict per your rules."
         )
-        async for _ in self._invoke_specialist(ctx, agent=self.meta_critic, prompt_text=critic_prompt, output_key=VERDICT_OUTPUT_KEY, trace_id=trace_id):
-            pass
+        # Same contract as the analyst above: yield through so the Runner
+        # commits the critic's output_key delta.
+        async for event in self._invoke_specialist(ctx, agent=self.meta_critic, prompt_text=critic_prompt, output_key=VERDICT_OUTPUT_KEY, trace_id=trace_id):
+            yield event
         critique = _extract_json(ctx.session.state.get(VERDICT_OUTPUT_KEY, "")) or None
 
         if critique is None:
-            # Fail-closed: no adversarial verdict â†’ treat as REJECT.
+            # Fail-closed: no adversarial verdict → treat as REJECT.
             critique = {
                 "verdict": "REJECT",
                 "reasoning": "Meta-Critic unavailable; fail-closed policy forbids unreviewed self-modification",
@@ -340,7 +360,7 @@ class EvolutionEngine(BaseAgent):
                 )
                 await self._log_cycle(trace_id, current_policy, current_policy, proposal_payload, critique, gaming_flags, [], verdict, applied=False)
                 yield await self._commit(ctx, report)
-                yield self._status_event("Evolution FROZEN â€” human review required.")
+                yield self._status_event("Evolution FROZEN — human review required.")
                 return
 
             audit_logger.log_event(
@@ -399,7 +419,7 @@ class EvolutionEngine(BaseAgent):
                     rejection_counter=rejections, frozen=True,
                 )
                 yield await self._commit(ctx, report)
-                yield self._status_event("Repeated envelope-pushing â€” evolution FROZEN.")
+                yield self._status_event("Repeated envelope-pushing — evolution FROZEN.")
                 return
         else:
             await self.bank().set_meta(_META_ENVELOPE_PUSHES, 0)
@@ -418,7 +438,7 @@ class EvolutionEngine(BaseAgent):
             )
             await self._log_cycle(trace_id, current_policy, current_policy, proposal_payload, critique, gaming_flags, clamp_actions, "INVARIANT_FAIL", applied=False)
             yield await self._commit(ctx, report)
-            yield self._status_event("Invariant violation â€” cycle rejected.")
+            yield self._status_event("Invariant violation — cycle rejected.")
             return
 
         # ---- Steps 15-17: apply, persist, audit ----------------------------------

@@ -47,7 +47,7 @@ TERMINAL_STATUSES = {
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"
 
     pipelines = []
     for _ in range(TOTAL_ALERTS):

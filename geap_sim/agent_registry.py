@@ -35,6 +35,17 @@ class AgentManifest(BaseModel):
 
 _DEFAULT_MANIFESTS: Final[tuple[AgentManifest, ...]] = (
     AgentManifest(
+        agent_name="fleet_admiral",
+        version=_FLEET_VERSION,
+        description=(
+            "Constellation-level control plane. Ranks owned assets by "
+            "remaining fuel across a burst of simultaneous conjunctions and "
+            "assigns dodge/hold; owns no tools and cannot authorise a burn."
+        ),
+        allowed_tools=[],
+        identity_scope="command.constellation",
+    ),
+    AgentManifest(
         agent_name="fleet_commander",
         version=_FLEET_VERSION,
         description=(
@@ -61,6 +72,8 @@ _DEFAULT_MANIFESTS: Final[tuple[AgentManifest, ...]] = (
             "fetch_real_tle",
             "fetch_conjunction_screening",
             "recall_similar_conjunctions",
+            "get_live_conjunctions",
+            "select_live_protagonist",
         ],
         identity_scope="orbital.analysis",
     ),

@@ -33,7 +33,7 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from agents.safety import MAX_ALLOWED_DELTA_V_MPS
+from geap_sim.safety_limits import MAX_ALLOWED_DELTA_V_MPS
 
 from geap_sim.memory_bank import MemoryBank, estimate_fuel_after_burn, get_shared_memory_bank
 from geap_sim.observability import audit_logger

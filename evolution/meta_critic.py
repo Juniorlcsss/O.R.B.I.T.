@@ -23,13 +23,14 @@ from typing import Final
 
 from google.adk.agents import LlmAgent
 from google.genai import types
+from geap_sim.model_config import structured_json_config
 
 AGENT_NAME: Final[str] = "meta_critic"
 OUTPUT_KEY: Final[str] = "orbit_evolution_verdict"
 
 #: Pro-tier reasoning model by default — the adversary should never lose to
 #: the proposer on model quality.
-_MODEL_ID: Final[str] = os.environ.get("ORBIT_META_CRITIC_MODEL_ID", "gemini-2.5-pro")
+_MODEL_ID: Final[str] = os.environ.get("ORBIT_META_CRITIC_MODEL_ID", "gemini-3.7-flash")
 _TEMPERATURE: Final[float] = 0.0
 
 _SYSTEM_INSTRUCTION: Final[str] = """You are the Meta-Critic, the adversarial reviewer of self-modification proposals for the
@@ -59,10 +60,9 @@ meta_critic_agent: Final[LlmAgent] = LlmAgent(
         "a suspicion score and explicit safety concerns."
     ),
     instruction=_SYSTEM_INSTRUCTION,
-    generate_content_config=types.GenerateContentConfig(
+    generate_content_config=structured_json_config(
+        answer_tokens=1024,
         temperature=_TEMPERATURE,
-        max_output_tokens=1024,
-        response_mime_type="application/json",
     ),
     output_key=OUTPUT_KEY,
 )

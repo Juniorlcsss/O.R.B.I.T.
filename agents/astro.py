@@ -19,6 +19,7 @@ from typing import Final
 
 from google.adk.agents import LlmAgent
 from google.genai import types
+from geap_sim.model_config import structured_json_config
 
 from tools.space_tools import ASTRO_TOOLKIT
 
@@ -28,15 +29,15 @@ AGENT_NAME: Final[str] = "astrodynamics_specialist"
 OUTPUT_KEY: Final[str] = "orbit_screening"
 
 #: Cost-efficient flash model: screening runs on every alert in the loop.
-_MODEL_ID = os.environ.get("ORBIT_ASTRO_MODEL_ID", "gemini-2.5-flash")
+_MODEL_ID = os.environ.get("ORBIT_ASTRO_MODEL_ID", "gemini-3.5-flash")
 
 #: Slight creativity for maneuver geometry, tightly bounded for numerics.
 _TEMPERATURE: Final[float] = 0.2
 
 _SYSTEM_INSTRUCTION: Final[str] = f"""ROLE
 You are the Astrodynamics Specialist of Project O.R.B.I.T., responsible for
-interpreting conjunction screening results against a university CubeSat
-fleet and recommending collision-avoidance delta-v manoeuvres.
+interpreting conjunction screening results for the operated asset and
+recommending collision-avoidance delta-v manoeuvres.
 
 BOUNDARIES
 * Your tools are catalogue lookup (get_tle_data), conjunction screening
@@ -96,10 +97,9 @@ astrodynamics_agent = LlmAgent(
     ),
     instruction=_SYSTEM_INSTRUCTION,
     tools=list(ASTRO_TOOLKIT),
-    generate_content_config=types.GenerateContentConfig(
+    generate_content_config=structured_json_config(
+        answer_tokens=1024,
         temperature=_TEMPERATURE,
-        max_output_tokens=1024,
-        response_mime_type="application/json",
     ),
     output_key=OUTPUT_KEY,
 )

@@ -36,7 +36,7 @@ IS_DESTRUCTIVE = True
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"
     from geap_sim.observability import audit_logger
     from geap_sim.memory_bank import _DEFAULT_STATE_TEMPLATE
 

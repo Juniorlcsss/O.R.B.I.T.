@@ -15,8 +15,9 @@ from typing import Final
 
 from google.adk.agents import LlmAgent
 from google.genai import types
+from geap_sim.model_config import structured_json_config
 
-_MODEL_ID: Final[str] = os.environ.get("ORBIT_STRATEGIST_MODEL_ID", "gemini-2.5-flash")
+_MODEL_ID: Final[str] = os.environ.get("ORBIT_STRATEGIST_MODEL_ID", "gemini-3.5-flash")
 _TEMPERATURE: Final[float] = 0.6
 
 _COMMON_CONTRACT: Final[str] = """
@@ -65,10 +66,9 @@ def _make(name: str, instruction: str) -> Final[LlmAgent]:
         model=_MODEL_ID,
         description=instruction.splitlines()[1].strip(),
         instruction=instruction,
-        generate_content_config=types.GenerateContentConfig(
+        generate_content_config=structured_json_config(
+            answer_tokens=768,
             temperature=_TEMPERATURE,
-            max_output_tokens=768,
-            response_mime_type="application/json",
         ),
         output_key=f"orbit_debate_{name}",
     )
