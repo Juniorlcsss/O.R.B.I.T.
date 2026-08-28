@@ -1,42 +1,52 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiFetch } from "../lib/api.js";
 
 const POLL_INTERVAL_MS = 2000;
 
-export default function useOrbitalState(intervalMs = POLL_INTERVAL_MS) {
+export default function useOrbitalState(intervalMs = POLL_INTERVAL_MS, exercise = false) {
   const [objects, setObjects] = useState([]);
   const [conjunctions, setConjunctions] = useState([]);
+  const [provenance, setProvenance] = useState({ simulated: true, source: null });
   const [generatedUtc, setGeneratedUtc] = useState(null);
   const [lastUpdatedMs, setLastUpdatedMs] = useState(null);
   const [error, setError] = useState(null);
-  const timerRef = useRef(null);
-  const aliveRef = useRef(true);
-
   useEffect(() => {
-    aliveRef.current = true;
+    let cancelled = false;
+    let timer = null;
 
     async function poll() {
       try {
-        const snapshot = await apiFetch("/api/orbital_state");
-        if (!aliveRef.current) return;
+        const snapshot = await apiFetch(`/api/orbital_state${exercise ? "?exercise=true" : ""}`);
+        if (cancelled) return;
         setObjects(snapshot.objects || []);
         setConjunctions(snapshot.conjunctions || []);
+        setProvenance({
+          simulated: snapshot.simulated !== false,
+          source: snapshot.source || null,
+          protectedSatId: snapshot.protected_sat_id || null,
+          responseMode: snapshot.response_mode || null,
+          exerciseActive: snapshot.exercise_active === true,
+        });
         setGeneratedUtc(snapshot.generated_utc);
         setLastUpdatedMs(Date.now());
-        setError(null);
+        setError(
+          snapshot.status === "unavailable"
+            ? `live orbital data unavailable — ${snapshot.reason || "Space-Track unreachable"}`
+            : null
+        );
       } catch (err) {
-        if (aliveRef.current) setError(String(err.message || err));
+        if (!cancelled) setError(String(err.message || err));
       } finally {
-        if (aliveRef.current) timerRef.current = setTimeout(poll, intervalMs);
+        if (!cancelled) timer = setTimeout(poll, intervalMs);
       }
     }
 
     poll();
     return () => {
-      aliveRef.current = false;
-      clearTimeout(timerRef.current);
+      cancelled = true;
+      clearTimeout(timer);
     };
-  }, [intervalMs]);
+  }, [intervalMs, exercise]);
 
-  return { objects, conjunctions, generatedUtc, lastUpdatedMs, error };
+  return { objects, conjunctions, provenance, generatedUtc, lastUpdatedMs, error };
 }

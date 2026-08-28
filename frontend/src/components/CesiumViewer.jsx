@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as Cesium from "cesium";
 import "cesium/Build/Cesium/Widgets/widgets.css";
 import { IconCrosshair, IconLock, IconReset } from "./icons.jsx";
-import { num } from "../lib/format.js";
+import { isOurAsset, num, objectLabel, objectRole } from "../lib/format.js";
 import useSettings from "../hooks/useSettings.jsx";
 
 /*
@@ -23,7 +23,6 @@ import useSettings from "../hooks/useSettings.jsx";
  * bands stay separable without relying on hue.
  */
 
-const DEMO_SAT_ID = "LANCASTER_ORBIT_1";
 
 // Camera envelope. Altitudes are metres above the WGS84 ellipsoid.
 const MIN_ALT = 1_400_000;
@@ -46,6 +45,7 @@ const KEY_ZOOM_FACTOR = 1.12;
 const MANEUVER_DURATION_MS = 5_000;
 const MANEUVER_LON_OFFSET_DEG = 0.55;
 const MANEUVER_LABEL_LINGER_MS = 4_000;
+const CONJUNCTION_LINK_MAX_M = 4_000_000;
 
 const TRAIL_LENGTH = 110;
 const TRAIL_ALPHA = 0.3;
@@ -119,6 +119,9 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
       debrisOutline: Cesium.Color.fromCssColorString(palette.debris).darken(0.75, new Cesium.Color()),
       debrisLabel: Cesium.Color.fromCssColorString(palette.debris).brighten(0.5, new Cesium.Color()),
       caution: Cesium.Color.fromCssColorString(palette.caution),
+      exercise: Cesium.Color.fromCssColorString(palette.caution),
+      exerciseOutline: Cesium.Color.fromCssColorString(palette.caution).darken(0.7, new Cesium.Color()),
+      exerciseLabel: Cesium.Color.fromCssColorString(palette.caution).brighten(0.5, new Cesium.Color()),
       nominal: Cesium.Color.fromCssColorString(palette.nominal),
       band: {
         LOW: Cesium.Color.fromCssColorString(risk.LOW),
@@ -140,6 +143,7 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
   const [locked, setLocked] = useState(false);
   const [following, setFollowing] = useState(null);
   const [hint, setHint] = useState(true);
+  const [viewerReady, setViewerReady] = useState(false);
 
   useEffect(() => {
     selectRef.current = onSelect;
@@ -366,6 +370,7 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
     ssc.enableCollisionDetection = false;
 
     applyCamera();
+    setViewerReady(true);
 
     const onTick = () => {
       const cam = camRef.current;
@@ -563,13 +568,13 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [noteInput, releaseFollow, resetView, zoomBy]);
 
-  // Swing to the demo asset once, on first acquisition.
   const acquiredRef = useRef(false);
   useEffect(() => {
-    const demo = snapshotRef.current[DEMO_SAT_ID];
-    if (acquiredRef.current || !demo) return;
+    if (acquiredRef.current) return;
+    const target = (objects || []).find((o) => o.owned) || (objects || [])[0];
+    if (!target) return;
     acquiredRef.current = true;
-    camRef.current.tLon = demo.lon;
+    camRef.current.tLon = target.lon;
     camRef.current.tAlt = 15_000_000;
   }, [objects]);
 
@@ -597,7 +602,9 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
       if (entitiesRef.current.has(obj.id)) return;
 
       const isSatellite = obj.type === "satellite";
-      const shortName = obj.name.replace(/\s*\(.*?\)\s*/g, "").trim();
+      const isExercise = obj.exercise === true;
+      const baseName = obj.name.replace(/\s*\(.*?\)\s*/g, "").trim();
+      const shortName = isExercise ? `SIM ${baseName}` : baseName;
 
       const entity = viewer.entities.add({
         id: obj.id,
@@ -613,14 +620,16 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
             }
             return selectedRef.current === obj.id ? base + 3 : base;
           }, false),
-          color: isSatellite ? colors.satellite : colors.debris,
+          color: isExercise ? colors.exercise : isSatellite ? colors.satellite : colors.debris,
           outlineColor: new Cesium.CallbackProperty(
             () =>
               selectedRef.current === obj.id
                 ? SELECT_OUTLINE
-                : isSatellite
-                  ? colors.satelliteOutline
-                  : colors.debrisOutline,
+                : isExercise
+                  ? colors.exerciseOutline
+                  : isSatellite
+                    ? colors.satelliteOutline
+                    : colors.debrisOutline,
             false
           ),
           outlineWidth: new Cesium.CallbackProperty(() => (selectedRef.current === obj.id ? 2.5 : 1.5), false),
@@ -628,7 +637,7 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
         label: {
           text: shortName,
           font: labelFont.object,
-          fillColor: isSatellite ? colors.satelliteLabel : colors.debrisLabel,
+          fillColor: isExercise ? colors.exerciseLabel : isSatellite ? colors.satelliteLabel : colors.debrisLabel,
           style: Cesium.LabelStyle.FILL,
           pixelOffset: new Cesium.Cartesian2(10, -10),
           horizontalOrigin: Cesium.HorizontalOrigin.LEFT,
@@ -640,7 +649,11 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
           // but an operator can force every label on from settings.
           show: new Cesium.CallbackProperty(
             () =>
-              showAllLabels || isSatellite || selectedRef.current === obj.id || camRef.current.alt < 11_000_000,
+              showAllLabels ||
+              isExercise ||
+              isSatellite ||
+              selectedRef.current === obj.id ||
+              camRef.current.alt < 11_000_000,
             false
           ),
         },
@@ -648,7 +661,7 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
       entitiesRef.current.set(obj.id, entity);
 
       // Ground-track history. Thin and low-contrast: context, not content.
-      const trailColor = isSatellite ? colors.satellite : colors.debris;
+      const trailColor = isExercise ? colors.exercise : isSatellite ? colors.satellite : colors.debris;
       const trail = viewer.entities.add({
         id: `trail-${obj.id}`,
         polyline: {
@@ -721,12 +734,14 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
           positions: new Cesium.CallbackProperty(() => {
             const from = currentCartesian(conj.sat_id);
             const to = currentCartesian(conj.debris_id);
-            return from && to ? [from, to] : [];
+            if (!from || !to) return [];
+            return Cesium.Cartesian3.distance(from, to) > CONJUNCTION_LINK_MAX_M
+              ? []
+              : [from, to];
           }, false),
           width: (1.5 + 3.5 * closeness) * settings.scale,
           arcType: Cesium.ArcType.NONE,
           material,
-          depthFailMaterial: color.withAlpha(0.22),
         },
       });
       linesRef.current.set(key, entity);
@@ -782,9 +797,11 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
 
   const counts = useMemo(() => {
     const list = objects || [];
+    const live = list.filter((o) => !o.exercise);
     return {
-      satellites: list.filter((o) => o.type === "satellite").length,
-      debris: list.filter((o) => o.type === "debris").length,
+      satellites: live.filter((o) => o.type === "satellite").length,
+      debris: live.filter((o) => o.type === "debris").length,
+      exercise: list.length - live.length,
     };
   }, [objects]);
 
@@ -795,11 +812,27 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
     return bands.size ? "LOW" : null;
   }, [conjunctions]);
 
+  const oursScreened = useMemo(() => {
+    const ours = new Set((objects || []).filter(isOurAsset).map((o) => o.id));
+    return (conjunctions || []).filter((c) => ours.has(c.sat_id) || ours.has(c.debris_id)).length;
+  }, [objects, conjunctions]);
+
   const selected = selectedId ? (objects || []).find((o) => o.id === selectedId) : null;
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-ink-900">
       <div ref={containerRef} className="h-full w-full" />
+
+      {!viewerReady && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-ink-900">
+          <span className="block h-px w-40 overflow-hidden bg-hair">
+            <span className="animate-sweep block h-px w-1/4 bg-accent" />
+          </span>
+          <p className="font-mono text-2xs uppercase tracking-[0.3em] text-fg-3">
+            Initialising orbital view
+          </p>
+        </div>
+      )}
 
       {/* Catalogue summary */}
       <div className="pointer-events-none absolute left-3 top-3 rounded border border-hair bg-ink-900/70 px-3 py-2 backdrop-blur-sm">
@@ -813,9 +846,20 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
             <span className="h-1.5 w-1.5 rounded-full" style={{ background: palette.debris }} />
             {counts.debris} debris
           </p>
+          {counts.exercise > 0 && (
+            <p className="flex items-center gap-2 text-caution">
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: palette.caution }} />
+              {counts.exercise} simulated (exercise)
+            </p>
+          )}
           <p className="pt-0.5 text-fg-3">
             {worstBand ? `${(conjunctions || []).length} screens · worst ${worstBand}` : "no active screens"}
           </p>
+          {worstBand && (
+            <p className={oursScreened > 0 ? "text-caution" : "text-fg-3"}>
+              {oursScreened > 0 ? `${oursScreened} involving our asset` : "none involving our asset"}
+            </p>
+          )}
         </div>
       </div>
 
@@ -901,8 +945,17 @@ export default function CesiumViewer({ objects, conjunctions, maneuver, selected
         <div className="absolute bottom-3 right-3 w-60 rounded border border-hair bg-ink-900/80 px-3 py-2.5 backdrop-blur-sm">
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <p className="eyebrow">{selected.type === "satellite" ? "Protected asset" : "Debris object"}</p>
-              <p className="mt-0.5 truncate font-mono text-xs text-fg">{selected.id}</p>
+              {/*
+               * Every satellite used to be labelled "Protected asset". The
+               * live catalogue contains third-party payloads — TIROS 3 sits
+               * there with `owned: false` — so selecting one had the console
+               * claim command authority over someone else's spacecraft, which
+               * is exactly the claim the rest of the UI is careful not to make.
+               */}
+              <p className={`eyebrow ${selected.exercise ? "text-caution" : ""}`}>{objectRole(selected)}</p>
+              <p className="mt-0.5 truncate text-xs text-fg" title={selected.id}>
+                {objectLabel(selected)}
+              </p>
             </div>
             <button
               onClick={() => selectRef.current?.(null)}

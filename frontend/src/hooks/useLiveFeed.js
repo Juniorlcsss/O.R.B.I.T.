@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { apiHeaders } from "../lib/api.js";
+import { apiHeaders, reportAuthFailure } from "../lib/api.js";
 
 // The gateway audits every 2 s telemetry poll, so the raw stream is mostly
 // housekeeping. Keep a deep client buffer or real mission decisions age out
@@ -23,11 +23,14 @@ export default function useLiveFeed() {
         const controller = new AbortController();
         abortRef.current = controller;
         try {
-          const response = await fetch("/api/live_feed", {
+          const response = await fetch("/api/live_feed?replay=200", {
             headers: apiHeaders(),
             signal: controller.signal,
           });
-          if (!response.ok || !response.body) throw new Error(`live_feed ${response.status}`);
+          if (!response.ok || !response.body) {
+            reportAuthFailure(response.status);
+            throw new Error(`live_feed ${response.status}`);
+          }
           setConnected(true);
           setError(null);
           attemptRef.current = 0;

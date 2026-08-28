@@ -1,0 +1,98 @@
+# =============================================================================
+# O.R.B.I.T. Command Center — static frontend + authenticating API proxy.
+#
+# Rendered at container start by the nginx image's envsubst entrypoint, which
+# substitutes ONLY variables present in the environment. That is what keeps
+# nginx's own $uri / $proxy_host / $binary_remote_addr intact: no environment
+# variable of those names exists. ${BACKEND_URL} and ${ORBIT_API_KEY} are
+# declared in Dockerfile.frontend precisely so they are always defined here.
+# =============================================================================
+
+# Rate-limit key. Cloud Run terminates TLS at Google's front end, so
+# $binary_remote_addr is the front end, not the caller — every visitor would
+# share one bucket, which throttles the innocent without isolating anyone.
+# The first X-Forwarded-For entry is the closest thing to a caller identity we
+# have. It is client-supplied and therefore spoofable: treat this as a speed
+# bump against accidental loops, NOT as a security control. The hard cost
+# ceiling is --max-instances on the backend service plus the Vertex AI quota.
+map $http_x_forwarded_for $orbit_client {
+    default              $binary_remote_addr;
+    "~^(?<caller>[^,\s]+)" $caller;
+}
+
+# Telemetry polls every 2 s and the globe redraws on its own cadence, so the
+# general bucket has to be roomy; the two routes that spend money do not.
+limit_req_zone $orbit_client zone=orbit_api:10m      rate=10r/s;
+limit_req_zone $orbit_client zone=orbit_missions:10m rate=10r/m;
+
+server {
+    listen 8080;
+    server_name _;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    gzip on;
+    gzip_types text/css application/javascript application/json image/svg+xml;
+
+    limit_req_status 429;
+
+    # ---------------------------------------------------------------------
+    # Proxy settings, declared once at server level so every /api location
+    # inherits them. Do NOT add proxy_set_header inside a location block:
+    # nginx REPLACES the inherited set rather than merging, so a single
+    # header added below would silently drop the API key with it.
+    # ---------------------------------------------------------------------
+
+    # The credential lives here, in the container, injected from Secret
+    # Manager at deploy time. It is deliberately NOT VITE_ORBIT_API_KEY:
+    # Vite inlines VITE_* into the JS bundle at build time, which would
+    # publish the backend key to every visitor with devtools. The browser
+    # sends no key and needs none — /api is same-origin through this proxy.
+    proxy_set_header X-API-KEY "${ORBIT_API_KEY}";
+    proxy_set_header Host $proxy_host;
+    proxy_set_header X-ORBIT-TRACE-ID $http_x_orbit_trace_id;
+    proxy_set_header Connection "";
+    proxy_http_version 1.1;
+
+    # SSE-critical: never buffer the live feed, never time it out early.
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+    chunked_transfer_encoding on;
+
+    # ---------------------------------------------------------------------
+    # The two routes that cost real money: each POST spins the fifteen-agent
+    # Gemini pipeline or a policy-mutating evolution cycle. Exact-match so
+    # they are matched before the general /api/ prefix below.
+    # ---------------------------------------------------------------------
+    location = /api/conjunction_alert {
+        limit_req zone=orbit_missions burst=3 nodelay;
+        proxy_pass ${BACKEND_URL};
+    }
+
+    location = /api/evolution/trigger {
+        limit_req zone=orbit_missions burst=3 nodelay;
+        proxy_pass ${BACKEND_URL};
+    }
+
+    location = /api/evolution/unfreeze {
+        limit_req zone=orbit_missions burst=3 nodelay;
+        proxy_pass ${BACKEND_URL};
+    }
+
+    location /api/ {
+        limit_req zone=orbit_api burst=40 nodelay;
+        proxy_pass ${BACKEND_URL};
+    }
+
+    location = /healthz {
+        access_log off;
+        return 200 "frontend-ok\n";
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

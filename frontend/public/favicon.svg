@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="O.R.B.I.T.">
+  <title>O.R.B.I.T.</title>
+  <!-- Dark disc so the mark keeps contrast on both light and dark tab bars. -->
+  <circle cx="32" cy="32" r="32" fill="#06080b"/>
+  <!-- Earth -->
+  <circle cx="32" cy="34" r="13" fill="#1e6feb"/>
+  <path d="M21 30c5 2 9 1 13-1s8-2 11 0" stroke="#4da3ff" stroke-width="1.6" fill="none" opacity=".75"/>
+  <path d="M20 38c6 1 10-1 14-3s8-1 11 1" stroke="#4da3ff" stroke-width="1.6" fill="none" opacity=".55"/>
+  <!-- Inclined orbit track -->
+  <ellipse cx="32" cy="32" rx="27" ry="11" fill="none" stroke="#7dd3fc" stroke-width="2"
+           opacity=".85" transform="rotate(-28 32 32)"/>
+  <!-- The asset on track, and the threat closing on it -->
+  <circle cx="52" cy="20" r="3.4" fill="#f8fafc"/>
+  <circle cx="14" cy="45" r="2.4" fill="#f59e0b"/>
+</svg>

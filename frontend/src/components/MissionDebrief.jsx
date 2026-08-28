@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { fetchDebrief } from "../lib/api.js";
+import useDialogChrome from "../hooks/useDialogChrome.js";
 import { IconActivity } from "./icons.jsx";
 
 const POLL_INTERVAL_MS = 3_000;
@@ -14,6 +15,7 @@ export default function MissionDebrief({ open, onClose, conjunctionId }) {
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const attemptRef = useRef(0);
+  const dialogRef = useRef(null);
 
   useEffect(() => {
     if (!open || !conjunctionId) {
@@ -54,13 +56,7 @@ export default function MissionDebrief({ open, onClose, conjunctionId }) {
     };
   }, [open, conjunctionId]);
 
-  // Escape closes, matching every other overlay in the console.
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event) => event.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useDialogChrome({ open: open && Boolean(conjunctionId), onClose, dialogRef });
 
   if (!open || !conjunctionId) return null;
 
@@ -78,7 +74,11 @@ export default function MissionDebrief({ open, onClose, conjunctionId }) {
       aria-label="Mission debrief"
       onClick={(event) => event.target === event.currentTarget && onClose()}
     >
-      <div className="w-full max-w-xl overflow-hidden rounded-lg border border-hair bg-ink-800 shadow-2xl">
+      <div
+        ref={dialogRef}
+        tabIndex={-1}
+        className="w-full max-w-xl overflow-hidden rounded-lg border border-hair bg-ink-800 shadow-2xl focus:outline-none"
+      >
         <header className="flex items-center gap-3 border-b border-hair px-4 py-3">
           <span className="text-accent">
             <IconActivity size={14} />

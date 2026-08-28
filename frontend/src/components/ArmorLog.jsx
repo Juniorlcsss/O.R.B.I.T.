@@ -19,6 +19,7 @@ function violationsOf(record) {
 
 export default function ArmorLog({ feedEvents }) {
   const [selectedTrace, setSelectedTrace] = useState(null);
+  const [shieldKey, setShieldKey] = useState(null);
   const [report, setReport] = useState(null);
   const [error, setError] = useState(null);
   const [manualInput, setManualInput] = useState("");
@@ -39,6 +40,23 @@ export default function ArmorLog({ feedEvents }) {
     if (!selectedTrace && traces.length) setSelectedTrace(traces[0].trace_id);
   }, [traces, selectedTrace]);
 
+
+  const latestRejection = useMemo(() => {
+    for (let i = feedEvents.length - 1; i >= 0; i -= 1) {
+      const record = feedEvents[i];
+      if (record?.event_type !== "MODEL_ARMOR_SWEEP") continue;
+      if (String(record.status || "").toUpperCase().includes("REJECT")) {
+        return `${record.trace_id}:${record.timestamp}`;
+      }
+      return null;
+    }
+    return null;
+  }, [feedEvents]);
+
+  useEffect(() => {
+    if (latestRejection) setShieldKey(latestRejection);
+  }, [latestRejection]);
+
   useEffect(() => {
     let alive = true;
     setReport(null);
@@ -53,7 +71,20 @@ export default function ArmorLog({ feedEvents }) {
   }, [selectedTrace]);
 
   return (
-    <section className="flex flex-col">
+    <section className="relative flex flex-col">
+      {shieldKey && (
+        <span
+          key={shieldKey}
+          aria-hidden="true"
+          onAnimationEnd={() => setShieldKey(null)}
+          className="animate-armor-shield pointer-events-none absolute inset-0 z-30 flex items-center justify-center"
+        >
+          <span className="flex flex-col items-center gap-2 text-alert">
+            <IconShield size={56} />
+            <span className="font-mono text-2xs uppercase tracking-[0.2em]">Maneuver rejected</span>
+          </span>
+        </span>
+      )}
       <header className="flex shrink-0 items-center justify-between gap-2 px-4 py-3">
         <h2 className="eyebrow flex items-center gap-1.5">
           <IconShield size={11} />

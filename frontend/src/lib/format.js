@@ -56,6 +56,37 @@ export const TONE = {
   info: { text: "text-fg-2", rail: "bg-ink-500", dot: "bg-fg-3" },
 };
 
+
+/**Catalogue name for display*/
+export function objectName(object) {
+  if (!object) return "";
+  return object.name || object.id || "";
+}
+
+/** `COSMOS 886 DEB · 9798` — name to read by, NORAD to identify by. */
+export function objectLabel(object) {
+  if (!object) return "";
+  const name = objectName(object);
+  return object.norad_id ? `${name} · ${object.norad_id}` : name;
+}
+
+/**
+ * Whether this is a vehicle O.R.B.I.T. actually commands.
+ */
+export function isOurAsset(object) {
+  return Boolean(object?.owned) || object?.role === "exercise_asset";
+}
+
+/** Operator-facing category for a catalogue object. */
+export function objectRole(object) {
+  if (!object) return "";
+  if (object.exercise) {
+    return object.role === "exercise_asset" ? "Exercise asset (simulated)" : "Exercise counterparty (simulated)";
+  }
+  if (object.owned) return "Protected asset";
+  return object.type === "satellite" ? "Third-party spacecraft" : "Debris object";
+}
+
 /** Fixed-width number with graceful fallback for missing telemetry. */
 export function num(value, digits = 1, fallback = "—") {
   const parsed = Number(value);
@@ -65,4 +96,38 @@ export function num(value, digits = 1, fallback = "—") {
 /** `2026-08-25T12:33:41Z` → `12:33:41`. */
 export function clockOf(iso) {
   return typeof iso === "string" && iso.length >= 19 ? iso.slice(11, 19) : "--:--:--";
+}
+
+/**
+ * Parse a backend timestamp as UTC, with or without a zone suffix.
+ *
+ *
+ * @param {string} iso Timestamp, zoned or bare.
+ * @returns {number} Epoch milliseconds, or NaN when unparseable.
+ */
+export function parseUtc(iso) {
+  if (typeof iso !== "string" || !iso) return NaN;
+  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(iso) ? iso : `${iso}Z`;
+  return Date.parse(zoned);
+}
+
+/**
+ * Signed countdown to an instant, as `T-01:23:45` / `T+00:00:12`.
+ *
+ *
+ * @param {number} targetMs Epoch ms of the event.
+ * @param {number} nowMs Epoch ms of now.
+ * @returns {string} Formatted countdown, or `T-··:··:··` when unknown.
+ */
+export function countdown(targetMs, nowMs) {
+  if (!Number.isFinite(targetMs) || !Number.isFinite(nowMs)) return "T-··:··:··";
+  const delta = targetMs - nowMs;
+  const sign = delta >= 0 ? "-" : "+";
+  let seconds = Math.floor(Math.abs(delta) / 1000);
+  const days = Math.floor(seconds / 86400);
+  seconds -= days * 86400;
+  const hh = String(Math.floor(seconds / 3600)).padStart(2, "0");
+  const mm = String(Math.floor((seconds % 3600) / 60)).padStart(2, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+  return days > 0 ? `T${sign}${days}d ${hh}:${mm}:${ss}` : `T${sign}${hh}:${mm}:${ss}`;
 }

@@ -6,9 +6,17 @@ export function apiHeaders(extra = {}) {
   return headers;
 }
 
+export const AUTH_FAILED_EVENT = "orbit:auth-failed";
+
+export function reportAuthFailure(status) {
+  if (status !== 401 && status !== 403) return;
+  window.dispatchEvent(new CustomEvent(AUTH_FAILED_EVENT, { detail: { status } }));
+}
+
 export async function apiFetch(path, options = {}) {
   const response = await fetch(path, { ...options, headers: apiHeaders(options.headers) });
   if (!response.ok) {
+    reportAuthFailure(response.status);
     let detail = `${response.status} ${response.statusText}`;
     try {
       const body = await response.json();
@@ -16,7 +24,9 @@ export async function apiFetch(path, options = {}) {
     } catch {
       /* keep status-line detail */
     }
-    throw new Error(detail);
+    const error = new Error(detail);
+    error.status = response.status;
+    throw error;
   }
   return response.json();
 }
@@ -69,4 +79,17 @@ export async function playEventAudio(eventType) {
 
 export function fetchDebrief(conjunctionId) {
   return apiFetch(`/api/debrief/${encodeURIComponent(conjunctionId)}`);
+}
+
+/**
+ * Run one self-evolution cycle
+ * 
+ * @returns {Promise<object>} The cycle result (status, before/after policy).
+ */
+export function postEvolution() {
+  return apiFetch("/api/evolution/trigger", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
 }

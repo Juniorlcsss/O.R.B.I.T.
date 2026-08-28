@@ -1,10 +1,9 @@
-import { useEffect, useRef } from "react";
+import { useRef } from "react";
 import useSettings from "../hooks/useSettings.jsx";
+import useDialogChrome from "../hooks/useDialogChrome.js";
 import { CVD_MODES, SCALES, TYPEFACES } from "../lib/accessibility.js";
 import { IconClose } from "./icons.jsx";
 import StatusMark from "./StatusMark.jsx";
-
-const FOCUSABLE = 'button:not([disabled]), [href], input, select, textarea, [tabindex]:not([tabindex="-1"])';
 
 const SHORTCUTS = [
   ["drag / arrows", "Orbit the globe"],
@@ -123,40 +122,7 @@ function PalettePreview() {
 export default function SettingsPanel({ open, onClose }) {
   const { settings, update, reset } = useSettings();
   const dialogRef = useRef(null);
-  const returnFocusRef = useRef(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    returnFocusRef.current = document.activeElement;
-    dialogRef.current?.querySelector(FOCUSABLE)?.focus();
-
-    // Escape closes; Tab is trapped so keyboard users cannot fall out of the
-    // dialog into the globe controls behind it.
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        onClose();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const nodes = [...(dialogRef.current?.querySelectorAll(FOCUSABLE) || [])];
-      if (nodes.length === 0) return;
-      const first = nodes[0];
-      const last = nodes[nodes.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown, true);
-      returnFocusRef.current?.focus?.();
-    };
-  }, [open, onClose]);
+  useDialogChrome({ open, onClose, dialogRef });
 
   if (!open) return null;
 

@@ -1,10 +1,36 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/api.js";
-import { num } from "../lib/format.js";
+import { num, objectLabel } from "../lib/format.js";
+import useDialogChrome from "../hooks/useDialogChrome.js";
 import { IconClose } from "./icons.jsx";
 
-const DEMO_MESSAGE =
-  "URGENT conjunction data message: LANCASTER_ORBIT_1 has a close approach with debris object FENGYUN_1C_DEB from the Fengyun-1C fragmentation event. TCA within hours. Immediate screening requested by Space-Track.";
+/*
+ * Composed from the live picture rather than a scripted scenario: the alert
+ * names whichever real objects are actually on the board. With no live data
+ * there is no honest alert to pre-fill, so the operator writes one.
+ */
+function composeMessage(satId, debrisId, conjunction) {
+  if (!satId || !debrisId) return "";
+  const tca = conjunction?.tca_utc ? ` TCA ${conjunction.tca_utc}.` : "";
+  const miss =
+    typeof conjunction?.miss_distance_km === "number"
+      ? ` Screened miss distance ${(conjunction.miss_distance_km * 1000).toFixed(0)} m.`
+      : "";
+  return (
+    `URGENT conjunction data message: ${satId} has a close approach with ` +
+    `${debrisId}.${tca}${miss} Immediate screening requested.`
+  );
+}
+
+/**
+ * Option text for the secondary-object list.
+ */
+function secondaryOption(object, encounter) {
+  const label = objectLabel(object);
+  if (!encounter) return `${label} — not screened`;
+  const metres = typeof encounter.miss_distance_km === "number" ? ` · ${(encounter.miss_distance_km * 1000).toFixed(0)} m` : "";
+  return `${label} — ${encounter.risk_band || "screened"}${metres}`;
+}
 
 const PRIORITIES = ["ROUTINE", "URGENT", "CRITICAL"];
 
@@ -23,30 +49,50 @@ function Field({ label, children }) {
   );
 }
 
-export default function ConjunctionAlert({ open, onClose, satellites, debris, onMissionComplete }) {
-  const [satId, setSatId] = useState("LANCASTER_ORBIT_1");
-  const [debrisId, setDebrisId] = useState("FENGYUN_1C_DEB");
+export default function ConjunctionAlert({
+  open,
+  onClose,
+  assets,
+  secondaries,
+  conjunctions,
+  onMissionComplete,
+}) {
+  const [satId, setSatId] = useState("");
+  const [debrisId, setDebrisId] = useState("");
   const [priority, setPriority] = useState("URGENT");
-  const [message, setMessage] = useState(DEMO_MESSAGE);
+  const [message, setMessage] = useState("");
+  const [messageEdited, setMessageEdited] = useState(false);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const dialogRef = useRef(null);
 
-  // Escape closes the dialog — but never mid-flight, where a half-run mission
-  // would lose its trace before the operator has read the outcome.
+
   useEffect(() => {
-    if (!open) return undefined;
-    const onKeyDown = (event) => {
-      if (event.key === "Escape" && !running) {
-        event.stopPropagation();
-        onClose();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown, true);
-    dialogRef.current?.focus();
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [open, running, onClose]);
+    if (!open) return;
+    const worst = (conjunctions || [])
+      .slice()
+      .sort((a, b) => (b.probability_of_collision || 0) - (a.probability_of_collision || 0))[0];
+    // Only accept an id the corresponding <select>
+    const inList = (id, list) => list.some((item) => item.id === id);
+    const nextSat = inList(worst?.sat_id, assets) ? worst.sat_id : assets[0]?.id || "";
+    const nextDebris = inList(worst?.debris_id, secondaries) ? worst.debris_id : secondaries[0]?.id || "";
+    setSatId(nextSat);
+    setDebrisId(nextDebris);
+    if (!messageEdited) setMessage(composeMessage(nextSat, nextDebris, worst));
+  }, [open, conjunctions, assets, secondaries, messageEdited]);
+
+
+  useDialogChrome({ open, onClose, dialogRef, closeOnEscape: !running });
+
+  const encounterBySecondary = useMemo(() => {
+    const index = new Map();
+    for (const c of conjunctions || []) {
+      if (c.debris_id) index.set(c.debris_id, c);
+      if (c.sat_id) index.set(c.sat_id, c);
+    }
+    return index;
+  }, [conjunctions]);
 
   if (!open) return null;
 
@@ -109,22 +155,25 @@ export default function ConjunctionAlert({ open, onClose, satellites, debris, on
           <div className="grid grid-cols-2 gap-4">
             <Field label="Protected asset">
               <select value={satId} onChange={(e) => setSatId(e.target.value)} className="field">
-                {satellites.map((sat) => (
+                {assets.map((sat) => (
                   <option key={sat.id} value={sat.id}>
-                    {sat.id}
+                    {objectLabel(sat)}
                   </option>
                 ))}
-                {satellites.length === 0 && <option value="LANCASTER_ORBIT_1">LANCASTER_ORBIT_1</option>}
+                {/* No invented stand-in: with no live objects there is
+                    nothing truthful to offer, and a placeholder id would
+                    dispatch a mission against an object that is not there. */}
+                {assets.length === 0 && <option value="">no commandable asset in view</option>}
               </select>
             </Field>
             <Field label="Secondary object">
               <select value={debrisId} onChange={(e) => setDebrisId(e.target.value)} className="field">
-                {debris.map((obj) => (
+                {secondaries.map((obj) => (
                   <option key={obj.id} value={obj.id}>
-                    {obj.id}
+                    {secondaryOption(obj, encounterBySecondary.get(obj.id))}
                   </option>
                 ))}
-                {debris.length === 0 && <option value="FENGYUN_1C_DEB">FENGYUN_1C_DEB</option>}
+                {secondaries.length === 0 && <option value="">no live secondary in view</option>}
               </select>
             </Field>
           </div>
@@ -149,7 +198,10 @@ export default function ConjunctionAlert({ open, onClose, satellites, debris, on
           <Field label="Raw feed message">
             <textarea
               value={message}
-              onChange={(e) => setMessage(e.target.value)}
+              onChange={(e) => {
+                setMessageEdited(true);
+                setMessage(e.target.value);
+              }}
               rows={4}
               className="field resize-none font-sans text-sm leading-relaxed"
             />

@@ -19,16 +19,33 @@ if [[ -z "${PROJECT_ID}" ]]; then
 fi
 
 SERVICE_NAME="${ORBIT_SERVICE_NAME:-orbit-fleet-commander}"
+WEB_SERVICE_NAME="${ORBIT_WEB_SERVICE_NAME:-orbit-command-center}"
 REGION="${ORBIT_REGION:-us-central1}"
+VERTEX_LOCATION="${ORBIT_VERTEX_LOCATION:-global}"
+MEDIA_LOCATION="${ORBIT_MEDIA_LOCATION:-us-central1}"
 IMAGE_URL="gcr.io/${PROJECT_ID}/${SERVICE_NAME}:latest"
+WEB_IMAGE_URL="gcr.io/${PROJECT_ID}/${WEB_SERVICE_NAME}:latest"
 SA_NAME="orbit-fleet-sa"
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 command -v gcloud >/dev/null 2>&1 || { echo "ERROR: gcloud CLI is required." >&2; exit 1; }
 
 if [[ -z "${ORBIT_API_KEY:-}" ]]; then
-  echo "⚠️  ORBIT_API_KEY is unset — the deployed API will run with authentication DISABLED."
-  echo "   Export one before deploying for a fortified demo: export ORBIT_API_KEY=\$(openssl rand -hex 32)"
+  if [[ "${ORBIT_ALLOW_UNAUTHENTICATED_API:-}" == "1" ]]; then
+    echo "⚠️  ORBIT_API_KEY unset and ORBIT_ALLOW_UNAUTHENTICATED_API=1 — deploying WITHOUT auth."
+  else
+    echo "ERROR: ORBIT_API_KEY is unset. The service would deploy publicly with" >&2
+    echo "       authentication DISABLED. Generate one and retry:" >&2
+    echo "         export ORBIT_API_KEY=\$(openssl rand -hex 32)" >&2
+    echo "       To deploy unauthenticated anyway: export ORBIT_ALLOW_UNAUTHENTICATED_API=1" >&2
+    exit 1
+  fi
+fi
+
+if [[ -z "${ORBIT_COMMAND_SIGNING_KEY:-}" ]]; then
+  echo "⚠️  ORBIT_COMMAND_SIGNING_KEY unset — manoeuvre commands will be signed with a"
+  echo "    per-process key that no other replica can verify. Set one with:"
+  echo "      export ORBIT_COMMAND_SIGNING_KEY=\$(openssl rand -hex 32)"
 fi
 
 echo "🚀 Building ${IMAGE_URL} ..."
@@ -57,13 +74,39 @@ gcloud run deploy "${SERVICE_NAME}" \
   --max-instances 3 \
   --timeout 300 \
   --allow-unauthenticated \
-  --set-env-vars "ORBIT_API_KEY=${ORBIT_API_KEY:-},GOOGLE_CLOUD_PROJECT=${PROJECT_ID},ORBIT_MEMORY_BACKEND=auto" \
+  --set-env-vars "^@^ORBIT_API_KEY=${ORBIT_API_KEY:-}@GOOGLE_CLOUD_PROJECT=${PROJECT_ID}@GOOGLE_GENAI_USE_VERTEXAI=TRUE@GOOGLE_CLOUD_LOCATION=${VERTEX_LOCATION}@ORBIT_MEDIA_LOCATION=${MEDIA_LOCATION}@ORBIT_MEMORY_BACKEND=auto@ORBIT_COMMAND_SIGNING_KEY=${ORBIT_COMMAND_SIGNING_KEY:-}" \
   --service-account "${SA_EMAIL}"
 
 SERVICE_URL="$(gcloud run services describe "${SERVICE_NAME}" --platform managed --region "${REGION}" --format='value(status.url)')"
 
+# --- Frontend: static bundle + authenticating reverse proxy -----------------
+if [[ "${ORBIT_SKIP_FRONTEND:-}" == "1" ]]; then
+  echo "⏭️  ORBIT_SKIP_FRONTEND=1 — backend only."
+  WEB_URL=""
+else
+  echo "🚀 Building ${WEB_IMAGE_URL} ..."
+  BUILD_CFG="$(mktemp -t orbit-web-cloudbuild.XXXXXX.yaml)"
+  trap 'rm -f "${BUILD_CFG}"' EXIT
+  cat >"${BUILD_CFG}" <<YAML
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ["build", "-f", "Dockerfile.frontend", "-t", "${WEB_IMAGE_URL}", "."]
+images: ["${WEB_IMAGE_URL}"]
+YAML
+  gcloud builds submit --config "${BUILD_CFG}" .
+
+  gcloud run deploy "${WEB_SERVICE_NAME}"     --image "${WEB_IMAGE_URL}"     --platform managed     --region "${REGION}"     --port 8080     --memory 512Mi     --cpu 1     --min-instances 0     --max-instances 3     --allow-unauthenticated     --set-env-vars "^@^BACKEND_URL=${SERVICE_URL}@ORBIT_API_KEY=${ORBIT_API_KEY:-}"
+
+  WEB_URL="$(gcloud run services describe "${WEB_SERVICE_NAME}" --platform managed --region "${REGION}" --format='value(status.url)')"
+
+
+  echo "🔒 Restricting backend CORS to ${WEB_URL} ..."
+  gcloud run services update "${SERVICE_NAME}"     --platform managed --region "${REGION}"     --update-env-vars "ORBIT_CORS_ORIGINS=${WEB_URL}" >/dev/null
+fi
+
 echo "✅ Deployment complete!"
-echo "🔗 Service URL: ${SERVICE_URL}"
+echo "🔗 Backend URL:  ${SERVICE_URL}"
+[[ -n "${WEB_URL}" ]] && echo "🛰️  Command center: ${WEB_URL}"
 echo ""
 echo "Try it:"
 cat <<EOF
@@ -71,10 +114,14 @@ curl -X POST "${SERVICE_URL}/api/conjunction_alert" \\
   -H "X-API-KEY: \${ORBIT_API_KEY}" \\
   -H "Content-Type: application/json" \\
   -d '{
-        "sat_id": "LANCASTER_ORBIT_1",
-        "debris_id": "FENGYUN_1C_DEB",
+        "sat_id": "<protagonist id>",
+        "debris_id": "<counterparty id>",
         "alert_source": "SPACE_TRACK_API",
         "priority": "CRITICAL",
-        "raw_message": "URGENT: conjunction warning, debris fragment closing on university CubeSat."
+        "raw_message": "URGENT: conjunction warning from the public CDM feed."
       }'
+
+# Object ids are not fixed: the protected asset is whichever real payload
+# currently faces the worst approach. Discover the pair first with
+#   curl "${SERVICE_URL}/api/live_protagonist" -H "X-API-KEY: \${ORBIT_API_KEY}"
 EOF

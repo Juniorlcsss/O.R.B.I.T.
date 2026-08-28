@@ -43,7 +43,17 @@ import os
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, AsyncIterator, Final, Literal, Optional
+
+try:
+    from dotenv import load_dotenv
+
+    _ENV_FILE = Path(__file__).resolve().parent / ".env"
+    if _ENV_FILE.is_file():
+        load_dotenv(_ENV_FILE, override=False)
+except ImportError:  # pragma: no cover - python-dotenv ships with uvicorn[standard]
+    pass
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -64,6 +74,13 @@ from agents.orchestrator import (
     STATE_MISSION_DOSSIER,
     STATE_TRACE_ID,
     fleet_commander_agent,
+)
+from agents.admiral import (
+    ASSIGN_DODGE,
+    STATE_CONSTELLATION_BATCH,
+    STATE_CONSTELLATION_PLAN,
+    build_constellation_plan,
+    fleet_admiral_agent,
 )
 from agents.watcher import watcher_agent
 from evolution.engine import STATE_REPORT_KEY as EVOLUTION_REPORT_KEY, EvolutionEngine
@@ -89,7 +106,11 @@ _API_KEY: Final[str] = os.getenv("ORBIT_API_KEY", "").strip()
 
 memory_bank = get_shared_memory_bank()
 session_service = InMemorySessionService()
-runner = Runner(agent=fleet_commander_agent, app_name=APP_NAME, session_service=session_service)
+# The Fleet Admiral is the root of the agent tree. For a single alert it is a
+# transparent pass-through to the FleetCommander, so this substitution changes
+# nothing about the single-mission path; it exists so a *batch* of concurrent
+# conjunctions is triaged by fuel before any of them reach the pipeline.
+runner = Runner(agent=fleet_admiral_agent, app_name=APP_NAME, session_service=session_service)
 
 # Self-evolution subsystem (Phase 10): production engine with the real
 # analyst + adversarial Meta-Critic; evaluation tests inject scripted twins.
@@ -122,11 +143,55 @@ if not _API_KEY:
 # ---------------------------------------------------------------------------
 
 
+def _boot_configuration_payload() -> dict[str, Any]:
+    """Non-secret snapshot of the LLM-routing configuration, for the audit log.
+
+    A misrouted SDK is the one misconfiguration this fleet cannot report on
+    its own. Everything else fails loudly, but when ``GOOGLE_GENAI_USE_VERTEXAI``
+    is unset the google-genai client silently falls back to the Gemini Developer
+    API, fails for want of an API key, and the fleet's own fail-closed design
+    presents the collapse as the safety system working correctly. Recording the
+    routing decision at boot makes that state visible in the same audit stream
+    as everything else, rather than inferable only from a stack trace.
+
+    Values are reported as resolved booleans and paths — never contents. The
+    service-account file and ``ORBIT_API_KEY`` are reported as present/absent
+    only, because this payload lands in Cloud Logging.
+    """
+    creds_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS") or ""
+    use_vertex = os.environ.get("GOOGLE_GENAI_USE_VERTEXAI", "")
+    return {
+        # The SDK lowercases this, so "TRUE"/"true"/"1" are equivalent; the
+        # resolved boolean is what actually decides routing.
+        "use_vertexai_raw": use_vertex or None,
+        "routes_to_vertex": use_vertex.strip().lower() in {"1", "true"},
+        "project": os.environ.get("GOOGLE_CLOUD_PROJECT") or None,
+        "location": os.environ.get("GOOGLE_CLOUD_LOCATION") or None,
+        "credentials_path": creds_path or None,
+        "credentials_file_exists": bool(creds_path) and Path(creds_path).is_file(),
+        # Set means the SDK could route to AI Studio instead; worth seeing.
+        "google_api_key_present": bool(os.environ.get("GOOGLE_API_KEY")),
+        "memory_backend": os.environ.get("ORBIT_MEMORY_BACKEND") or "auto",
+        "offline_strategists": os.environ.get("ORBIT_OFFLINE_STRATEGISTS", "").strip().lower()
+        in {"1", "true", "yes"},
+    }
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    boot_config = _boot_configuration_payload()
+    audit_logger.log_event(
+        trace_id="startup",
+        agent_name="orbit.api",
+        event_type="BOOT_CONFIGURATION",
+        payload=boot_config,
+        status="OK" if boot_config["routes_to_vertex"] else "DEGRADED",
+    )
+
     registry = get_shared_registry()
-    registry_agents = fleet_commander_agent.fleet_roster
-    missing = [name for name in registry_agents if name not in registry.list_agents()]
+    attested_agents = registry.list_agents()
+    pipeline_roster = (fleet_admiral_agent.name, *fleet_commander_agent.fleet_roster)
+    missing = [name for name in pipeline_roster if name not in attested_agents]
     if missing:
         # Import-time attestation should have caught this; belt and braces.
         raise SystemExit(f"Boot attestation failed: agents missing manifests: {missing}")
@@ -134,7 +199,14 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
         trace_id="startup",
         agent_name="orbit.api",
         event_type="BOOT_ATTESTATION",
-        payload={"agents": list(registry_agents), "fleet_version": FLEET_VERSION},
+        payload={
+            # Every agent holding a zero-trust manifest — mission pipeline
+            # plus the out-of-band subsystems (evolution, debate panel).
+            "agents": list(attested_agents),
+            # The subset wired into the synchronous conjunction pipeline.
+            "pipeline_roster": list(pipeline_roster),
+            "fleet_version": FLEET_VERSION,
+        },
         status="APPROVED",
     )
 
@@ -255,7 +327,7 @@ async def security_and_audit_middleware(request: Request, call_next):
 class ConjunctionAlertRequest(BaseModel):
     """Inbound space-tracking alert (mocking a SPACE_TRACK / radar feed)."""
 
-    sat_id: str = Field(..., min_length=3, max_length=64, examples=["LANCASTER_ORBIT_1"])
+    sat_id: str = Field(..., min_length=3, max_length=64, examples=["COSMOS_864_9509"])
     debris_id: str = Field(..., min_length=3, max_length=64, examples=["FENGYUN_1C_DEB"])
     alert_source: str = Field(default="SPACE_TRACK_API", max_length=64)
     priority: Literal["ROUTINE", "URGENT", "CRITICAL"] = "ROUTINE"
@@ -278,10 +350,43 @@ class ConjunctionAlertResponse(BaseModel):
     conjunction_id: Optional[str] = None
 
 
+class BatchConjunctionAlertRequest(BaseModel):
+    """A burst of simultaneous conjunctions across the constellation.
+
+    Debris-generating events do not produce one alert; they produce many at
+    once, against different owned assets with different fuel margins. This is
+    the shape the Fleet Admiral exists to answer.
+    """
+
+    alerts: list[ConjunctionAlertRequest] = Field(..., min_length=1, max_length=12)
+
+
+class ConstellationAssignment(BaseModel):
+    """One satellite's place in the Admiral's fuel-ranked plan."""
+
+    sat_id: str
+    debris_id: str
+    fuel_percentage: float
+    assigned_action: str
+    reason: str
+    mission: Optional[ConjunctionAlertResponse] = None
+
+
+class ConstellationBatchResponse(BaseModel):
+    """Outcome of one constellation-optimised batch."""
+
+    batch_size: int
+    dodge_count: int
+    hold_count: int
+    strategic_reserve_percent: float
+    dodge_threshold_percent: float
+    assignments: list[ConstellationAssignment]
+
+
 class WatchRequest(BaseModel):
     """Command to begin long-running monitoring of one conjunction pair."""
 
-    sat_id: str = Field(..., min_length=3, max_length=64, examples=["LANCASTER_ORBIT_1"])
+    sat_id: str = Field(..., min_length=3, max_length=64, examples=["COSMOS_864_9509"])
     debris_id: str = Field(..., min_length=3, max_length=64, examples=["FENGYUN_1C_DEB"])
     interval_hours: float = Field(default=6.0, ge=1.0, le=72.0)
     escalate_band: Literal["LOW", "MEDIUM", "HIGH"] = "HIGH"
@@ -395,8 +500,82 @@ async def execute_mission(alert: dict[str, Any]) -> ConjunctionAlertResponse:
         ) from exc
 
 
-@app.post("/api/conjunction_alert", response_model=ConjunctionAlertResponse)
-async def conjunction_alert(payload: ConjunctionAlertRequest) -> ConjunctionAlertResponse:
+async def execute_constellation_batch(
+    payload: BatchConjunctionAlertRequest,
+) -> ConstellationBatchResponse:
+    """Fuel-triage a burst of conjunctions, then fly the assigned missions.
+
+    The Admiral produces the plan; each assigned dodge then runs as its own
+    isolated mission. The isolation is deliberate: the FleetCommander writes
+    screening, negotiation and verdict payloads to fixed session-state keys,
+    so sharing one session across missions would let one mission read
+    another's screening. Separate sessions also keep every mission
+    independently replayable by trace ID.
+
+    Assets assigned ``hold_and_reassess`` are deliberately *not* flown. That
+    is the whole point — the Admiral can only ever subtract a manoeuvre, and
+    holding a reserve-critical satellite is the decision, not a failure to
+    reach one.
+    """
+    plan = await build_constellation_plan(payload.alerts, memory_bank)
+
+    # Audit the constellation decision before any mission flies.
+    #
+    # This path builds the plan directly rather than driving the Admiral
+    # through the Runner, because each assigned mission needs its own ADK
+    # session (see the docstring above) and one Runner invocation cannot
+    # produce several. That is the right execution model, but it means the
+    # Admiral's own audit emission never fires here — so the single most
+    # consequential decision in a batch, which satellites were held, would
+    # have gone unrecorded while every downstream mission was fully audited.
+    batch_trace = uuid.uuid4().hex
+    audit_logger.log_event(
+        trace_id=batch_trace,
+        agent_name=fleet_admiral_agent.name,
+        event_type="CONSTELLATION_PLAN_ASSIGNED",
+        payload={
+            "batch_size": plan["batch_size"],
+            "field_count": plan["field_count"],
+            "fields": plan["fields"],
+            "dodge_count": plan["dodge_count"],
+            "hold_count": plan["hold_count"],
+            "assignments": [
+                {k: v for k, v in a.items() if k != "alert"} for a in plan["assignments"]
+            ],
+        },
+        status="PLANNED",
+    )
+
+    assignments: list[ConstellationAssignment] = []
+    for entry in plan["assignments"]:
+        mission: Optional[ConjunctionAlertResponse] = None
+        if entry["assigned_action"] == ASSIGN_DODGE:
+            mission = await execute_mission(dict(entry["alert"]))
+        assignments.append(
+            ConstellationAssignment(
+                sat_id=entry["sat_id"],
+                debris_id=entry["debris_id"],
+                fuel_percentage=entry["fuel_percentage"],
+                assigned_action=entry["assigned_action"],
+                reason=entry["reason"],
+                mission=mission,
+            )
+        )
+
+    return ConstellationBatchResponse(
+        batch_size=plan["batch_size"],
+        dodge_count=plan["dodge_count"],
+        hold_count=plan["hold_count"],
+        strategic_reserve_percent=plan["strategic_reserve_percent"],
+        dodge_threshold_percent=plan["dodge_threshold_percent"],
+        assignments=assignments,
+    )
+
+
+@app.post("/api/conjunction_alert", response_model=None)
+async def conjunction_alert(
+    payload: BatchConjunctionAlertRequest | ConjunctionAlertRequest,
+) -> ConjunctionAlertResponse | ConstellationBatchResponse:
     """Execute a full collision-response mission for one conjunction alert.
 
     The alert is normalised by alert_triage, screened by the astrodynamics
@@ -404,7 +583,15 @@ async def conjunction_alert(payload: ConjunctionAlertRequest) -> ConjunctionAler
     encounters) and — when warranted — negotiated and gated through both
     the LLM Safety Officer and the deterministic Model Armour sweep before
     any execution decision is persisted.
+
+    Accepts either a single alert or ``{"alerts": [...]}``. A batch is routed
+    through the Fleet Admiral first, which ranks the affected assets by
+    remaining fuel and holds the reserve-critical ones instead of burning
+    them. The two request shapes are disjoint, so the discrimination is
+    structural rather than a mode flag.
     """
+    if isinstance(payload, BatchConjunctionAlertRequest):
+        return await execute_constellation_batch(payload)
     return await execute_mission(payload.model_dump())
 
 
@@ -428,7 +615,7 @@ async def agent_tree() -> dict[str, Any]:
     ``evolution_root`` adds the self-evolution subsystem and ``orbit_fleet``
     nests both under a single demo-friendly root.
     """
-    fleet_root = _describe_agent(fleet_commander_agent)
+    fleet_root = _describe_agent(fleet_admiral_agent)
     evolution_root = _describe_agent(evolution_engine)
     return {
         "fleet_version": FLEET_VERSION,
@@ -476,6 +663,33 @@ async def armor_report(trace_id: str) -> dict[str, Any]:
         "event_count": len(events),
         "events": events,
     }
+
+
+@app.get("/api/coordination/{trace_id}")
+async def coordination_request(trace_id: str) -> dict[str, Any]:
+    """The operator-to-operator coordination artifact emitted for a mission.
+
+    Returned when a HIGH-risk conjunction ended in standoff: a CCSDS-CDM-shaped
+    message plus a ready-to-send request for the counterparty's conjunction
+    assessment desk. There is no machine protocol to settle this today, so the
+    artifact exists to be sent by a human -- and says so.
+    """
+    events = [
+        event
+        for event in audit_logger.get_events_by_trace(trace_id)
+        if event.get("event_type") == "COORDINATION_REQUEST_EMITTED"
+    ]
+    if not events:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "message": "No coordination request was emitted for this trace_id.",
+                "trace_id": trace_id,
+                "hint": "Coordination artifacts are emitted when a HIGH-risk negotiation ends in standoff.",
+            },
+        )
+    artifact = dict(events[-1].get("payload") or {})
+    return {"trace_id": trace_id, **artifact}
 
 
 @app.get("/api/debrief/{conjunction_id}")
@@ -700,14 +914,45 @@ async def debate_transcript(trace_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/orbital_state")
-async def orbital_state() -> dict[str, Any]:
+async def orbital_state(exercise: bool = Query(default=False)) -> dict[str, Any]:
     """Live positions of every tracked object plus active conjunction lines.
 
     SGP4-propagates the catalogue to the current instant (TEME → WGS84) and
     returns the memoised non-LOW conjunction screens. Off the event loop so a
     burst of dashboard polls never starves mission traffic.
     """
-    return await asyncio.to_thread(get_orbital_snapshot)
+    return await asyncio.to_thread(get_orbital_snapshot, exercise)
+
+
+@app.get("/api/live_conjunctions")
+async def live_conjunctions(limit: int = Query(default=25, ge=1, le=100)) -> dict[str, Any]:
+    """Real conjunctions happening now, from Space-Track's public CDM feed.
+
+    This is the honest counterpart to the simulated catalogue: close
+    approaches that have not yet occurred, across the whole catalogue,
+    sorted by collision probability. Each encounter states whether either
+    object can manoeuvre, because that -- not the probability -- decides
+    whether a response can be coordinated or must be unilateral.
+
+    Degrades to an empty, clearly-labelled payload when Space-Track
+    credentials are absent or the service is unreachable.
+    """
+    from tools.space_tools import get_live_conjunctions
+
+    return await asyncio.to_thread(get_live_conjunctions, limit)
+
+
+@app.get("/api/live_protagonist")
+async def live_protagonist(limit: int = Query(default=25, ge=1, le=100)) -> dict[str, Any]:
+    """The real payload currently facing the highest-probability approach.
+
+    Resolves the fleet's protected asset from live data rather than a
+    hard-coded catalogue entry, so the demo defends an actual spacecraft
+    against an actual threat.
+    """
+    from tools.space_tools import select_live_protagonist
+
+    return await asyncio.to_thread(select_live_protagonist, limit)
 
 
 @app.get("/api/live_feed")
