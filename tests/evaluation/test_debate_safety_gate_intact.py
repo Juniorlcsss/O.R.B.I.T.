@@ -1,7 +1,7 @@
-"""Evaluation (Phase 11) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the debate cannot bypass the safety gates.
+"""Evaluation (Phase 11) — the debate cannot bypass the safety gates.
 
 Layer 1: an over-ceiling proposal (80 m/s) is discarded by the moderator's
-physics check before selection ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â it can never become the debate winner.
+physics check before selection — it can never become the debate winner.
 Layer 2 (belt and braces): even a payload that somehow reached the
 deterministic Model Armour with 80 m/s is REJECTED, exactly as Phase 9's
 policy-ceiling test proved.
@@ -59,7 +59,7 @@ async def execute(harness: EvaluationHarness):
         any(f.startswith("PHYSICS") and f"{MAX_ALLOWED_DELTA_V_MPS:g}" in f for f in flags), str(flags),
     ))
 
-    # ---- Layer 2: full mission ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â rogue voice present but honest majority wins,
+    # ---- Layer 2: full mission — rogue voice present but honest majority wins,
     # and armour inspects ONLY the valid operative burn.
     def make(strategist, dv):
         return lambda: {
@@ -77,13 +77,13 @@ async def execute(harness: EvaluationHarness):
     )
 
     specialists = harness.scripted_specialists(
-        triage_factory=lambda: triage_payload("LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"),
-        astro_factory=real_screening_payload("LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"),
+        triage_factory=lambda: triage_payload("SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"),
+        astro_factory=real_screening_payload("SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"),
         diplomat_factory=lambda: negotiation_payload("we_dodge", our_dv=8.0),
         safety_factory=lambda: verdict_payload(True),
     )
     pipeline = harness.build_pipeline(*specialists, debate_moderator=moderator)
-    outcome_mission = await harness.run_mission(pipeline, {"sat_id": "LANCASTER_ORBIT_1", "debris_id": "FENGYUN_1C_DEB"})
+    outcome_mission = await harness.run_mission(pipeline, {"sat_id": "SIM_PROTECTED_ASSET", "debris_id": "FENGYUN_1C_DEB"})
 
     checks.append(harness.require(
         "mission_executes_on_valid_burn",
@@ -98,7 +98,7 @@ async def execute(harness: EvaluationHarness):
     # ---- Layer 3 (belt & braces): direct armour sweep of an 80 m/s payload --
     armor_report = await harness.armor.inspect_maneuver_request(
         {"action": "we_dodge", "our_dv_mps": 80.0, "their_dv_mps": 0.0,
-         "sat_id": "LANCASTER_ORBIT_1", "mission_trace_id": "gate-intact-check"},
+         "sat_id": "SIM_PROTECTED_ASSET", "mission_trace_id": "gate-intact-check"},
         {"approved": True, "expected_delta_v_mps": 80.0},
     )
     checks.append(harness.require(

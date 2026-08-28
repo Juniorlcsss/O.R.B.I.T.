@@ -37,7 +37,7 @@ DESCRIPTION = "Dead triage provider → 3 attempts with backoff → breaker trip
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"
 
     original_backoff = orchestrator_module.BREAKER_BACKOFF_SECONDS
     orchestrator_module.BREAKER_BACKOFF_SECONDS = (0.01, 0.01, 0.01)  # speed: behaviour unchanged

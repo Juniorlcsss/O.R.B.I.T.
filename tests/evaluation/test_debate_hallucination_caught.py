@@ -1,7 +1,7 @@
-"""Evaluation (Phase 11) Ã¢â‚¬â€ a hallucinated citation disqualifies its author.
+"""Evaluation (Phase 11) — a hallucinated citation disqualifies its author.
 
 The Safety Maximizer cites a miss distance of 42 km when reality is
-0.0889 km Ã¢â‚¬â€ the deterministic hallucination check must flag it CRITICAL,
+0.0889 km — the deterministic hallucination check must flag it CRITICAL,
 discard the proposal before selection, and the debate must still produce a
 valid winner from the two honest voices.
 """
@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from tests.evaluation.harness import EvaluationHarness, astro_screening_fixture  # noqa: E402
 
 NAME = "debate_hallucination_caught"
-DESCRIPTION = "Cited miss distance 42 km vs actual 0.0889 km Ã¢â€ â€™ HALLUCINATION flag, proposal discarded"
+DESCRIPTION = "Cited miss distance 42 km vs actual 0.0889 km → HALLUCINATION flag, proposal discarded"
 
 
 async def execute(harness: EvaluationHarness):

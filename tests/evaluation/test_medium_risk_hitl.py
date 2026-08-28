@@ -29,7 +29,7 @@ DESCRIPTION = "MEDIUM band held for human review — advisory logged, zero auton
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "COSMOS_2251_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "COSMOS_2251_DEB"
     specialists = harness.scripted_specialists(
         triage_factory=lambda: triage_payload(sat, debris),
         astro_factory=lambda: screening_payload("MEDIUM", pc=5e-6, miss_distance_km=2.5, recommended_dv_mps=0.0, dv_direction="none"),

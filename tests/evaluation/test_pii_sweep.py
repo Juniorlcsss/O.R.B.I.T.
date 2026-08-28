@@ -31,7 +31,7 @@ FAKE_KEY = "AKIAIOSFODNN7EXAMPLE"
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "SIM_COORDINATION_TARGET"
     specialists = harness.scripted_specialists(
         triage_factory=lambda: triage_payload(sat, debris),
         astro_factory=real_screening_payload(sat, debris),  # recommended 8.0 → dv matches

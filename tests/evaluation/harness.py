@@ -1,6 +1,6 @@
 """Evaluation harness for Project O.R.B.I.T.'s automated suite.
 
-Design philosophy â€” "test the plane, not the weather"
+Design philosophy — "test the plane, not the weather"
 -----------------------------------------------------
 The fleet's *orchestration* is deterministic code: routing, circuit
 breakers, dual-gate Model Armour, memory persistence, audit correlation.
@@ -8,8 +8,8 @@ The specialist LLMs are stochastic weather. This harness therefore runs
 the **real** FleetCommanderPipeline end-to-end while substituting the four
 specialist LLMs with scripted agents whose outputs are schema-valid (and,
 where possible, computed from the real SGP4 tools). Everything downstream
-of an agent's JSON answer â€” validation, branching, armour gating,
-persistence, audit emission â€” executes unmodified production code.
+of an agent's JSON answer — validation, branching, armour gating,
+persistence, audit emission — executes unmodified production code.
 
 This makes the entire suite fast (<30 s), hermetic (no network, no
 credentials, no cost) and reproducible, while a ``--live`` mode exists for
@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 # Force the in-memory backend BEFORE anything constructs the shared bank:
 # hermetic, per-instance isolation and zero Firestore dependency.
 os.environ.setdefault("ORBIT_MEMORY_BACKEND", "memory")
+os.environ.setdefault("ORBIT_OFFLINE_STRATEGISTS", "1")
 
 from google.adk.agents.base_agent import BaseAgent  # noqa: E402
 from google.adk.agents.invocation_context import InvocationContext  # noqa: E402
@@ -69,7 +70,7 @@ from tools.space_tools import screen_conjunction  # noqa: E402
 
 
 def astro_screening_fixture(
-    sat_id: str = "LANCASTER_ORBIT_1",
+    sat_id: str = "SIM_PROTECTED_ASSET",
     debris_id: str = "FENGYUN_1C_DEB",
     recommended_dv_mps: float = 8.0,
 ) -> dict[str, Any]:
@@ -142,7 +143,7 @@ class ScriptedAgent(BaseAgent):
 
 
 class FailingAgent(BaseAgent):
-    """Specialist stand-in that always raises â€” the circuit-breaker fuel."""
+    """Specialist stand-in that always raises — the circuit-breaker fuel."""
 
     error_message: str = "simulated provider outage"
 
@@ -150,7 +151,7 @@ class FailingAgent(BaseAgent):
 
     async def _run_async_impl(self, ctx: InvocationContext):
         raise RuntimeError(self.error_message)
-        yield  # pragma: no cover â€” makes this an async generator
+        yield  # pragma: no cover — makes this an async generator
 
 
 # ---------------------------------------------------------------------------
@@ -191,7 +192,7 @@ def screening_payload(
 
 
 def real_screening_payload(sat_id: str, debris_id: str) -> Callable[[], dict[str, Any]]:
-    """Factory backed by the REAL SGP4 screening tool â€” truthful orbital math."""
+    """Factory backed by the REAL SGP4 screening tool — truthful orbital math."""
 
     def factory() -> dict[str, Any]:
         screened = screen_conjunction(sat_id, debris_id)
@@ -264,7 +265,7 @@ class EvaluationHarness:
             p_triage, p_astro, p_diplomat, p_safety = args[0]
         elif len(args) == 4:
             p_triage, p_astro, p_diplomat, p_safety = args
-        elif len(args) == 2:  # (triage, astro) â€” chaos scenarios kill upstream first
+        elif len(args) == 2:
             p_triage, p_astro, p_diplomat, p_safety = args[0], args[1], None, None
         else:
             p_triage = p_astro = p_diplomat = p_safety = None
@@ -413,7 +414,7 @@ class EvaluationHarness:
         self,
         moderator,
         screening: dict[str, Any],
-        sat_id: str = "LANCASTER_ORBIT_1",
+        sat_id: str = "SIM_PROTECTED_ASSET",
         debris_id: str = "FENGYUN_1C_DEB",
         trace_id: str | None = None,
     ) -> tuple[dict[str, Any] | None, str]:

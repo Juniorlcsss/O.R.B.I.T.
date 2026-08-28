@@ -28,7 +28,9 @@ DESCRIPTION = "80 m/s negotiated burn vs 50 m/s ceiling → POLICY_CEILING_EXCEE
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    # Uses the simulated coordination counterparty, not debris
+
+    sat, debris = "SIM_PROTECTED_ASSET", "SIM_COORDINATION_TARGET"
     specialists = harness.scripted_specialists(
         triage_factory=lambda: triage_payload(sat, debris),
         astro_factory=real_screening_payload(sat, debris),  # recommended 8.0 — ceiling breach is the point

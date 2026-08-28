@@ -28,7 +28,7 @@ DESCRIPTION = "6% fuel + 8 m/s dodge (projects 2% < 5% reserve) → STRATEGIC_RE
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB"
 
     await harness.memory_bank.update_satellite_state(sat, delta_v_expended=188.0, new_fuel=6.0)
     seeded = await harness.satellite_fuel(sat)

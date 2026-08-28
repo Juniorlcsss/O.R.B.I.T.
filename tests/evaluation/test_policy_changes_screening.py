@@ -31,7 +31,7 @@ async def _band_under_policy(store: PolicyStore, pc_high: float) -> tuple[str, d
     evolved = current.model_copy(update={"pc_high_threshold": pc_high})
     await store.save(evolved)
     invalidate_policy_cache()
-    screened = screen_conjunction("LANCASTER_ORBIT_1", "FENGYUN_1C_DEB")
+    screened = screen_conjunction("SIM_PROTECTED_ASSET", "FENGYUN_1C_DEB")
     return screened["risk_level"], screened["policy_thresholds"]
 
 

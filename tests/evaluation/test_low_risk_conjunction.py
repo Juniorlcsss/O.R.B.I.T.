@@ -28,7 +28,7 @@ DESCRIPTION = "LOW band (Pc 1e-9, miss 1500 km) logs only — no burn, no negoti
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "COSMOS_2251_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "COSMOS_2251_DEB"
     specialists = harness.scripted_specialists(
         triage_factory=lambda: triage_payload(sat, debris),
         astro_factory=lambda: screening_payload("LOW", pc=1e-9, miss_distance_km=1500.0, recommended_dv_mps=0.0, dv_direction="none"),

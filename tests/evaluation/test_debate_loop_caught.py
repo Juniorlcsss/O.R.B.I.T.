@@ -1,4 +1,4 @@
-"""Evaluation (Phase 11) â€” a looping strategist is frozen, the debate finishes.
+"""Evaluation (Phase 11) — a looping strategist is frozen, the debate finishes.
 
 The Reassess strategist repeats its round-0 argument verbatim in the
 critique round: the SHA-256 repetition detector flags STALLED and freezes

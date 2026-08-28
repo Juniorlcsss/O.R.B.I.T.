@@ -43,8 +43,10 @@ def discover_test_modules() -> list[str]:
     return sorted(p.stem for p in TEST_DIR.glob("test_*.py"))
 
 
-async def run_all(json_path: Path) -> int:
+async def run_all(json_path: Path, markdown_path: Path | None = None) -> int:
     from agents import __version__ as fleet_version  # after harness env setup
+
+    _silence_genai_teardown_noise()
 
     modules = discover_test_modules()
     print(f"ORBIT Evaluation Suite — {len(modules)} tests, hermetic mode (scripted specialists)")
@@ -104,20 +106,48 @@ async def run_all(json_path: Path) -> int:
         "all_passed": failures == 0,
     }
 
-    json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-
-    # Markdown summary table (mirrors what lands in the README).
-    print("\n" + "=" * 78)
-    print("| Test | Result | Checks | Duration |")
-    print("|---|---|---|---|")
+    verdict = "ALL GREEN" if failures == 0 else f"{failures} FAILING"
+    rows = ["| Test | Result | Checks | Duration |", "|---|---|---|---|"]
     for t in report["tests"]:
         result = "PASS" if t["passed"] else "**FAIL**"
-        print(f"| {t['name']} | {result} | {total_passed_checks and sum(1 for c in t['checks'] if c['passed'])}/{len(t['checks'])} | {t['duration_ms']:.0f} ms |")
-    verdict = "ALL GREEN" if failures == 0 else f"{failures} FAILING"
-    print(f"\nVerdict: {verdict}  ({report['summary']['checks_passed']}/{total_checks} checks)")
+        passed_checks = sum(1 for c in t["checks"] if c["passed"])
+        rows.append(
+            f"| {t['name']} | {result} | {passed_checks}/{len(t['checks'])} | {t['duration_ms']:.0f} ms |"
+        )
+    rows.append("")
+    rows.append(f"**Verdict: {verdict}** ({report['summary']['checks_passed']}/{total_checks} checks)")
+    markdown = "\n".join(rows)
+    report["markdown_summary"] = markdown
+
+    json_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    if markdown_path is not None:
+        with markdown_path.open("a", encoding="utf-8") as handle:
+            handle.write("### O.R.B.I.T. evaluation suite\n\n" + markdown + "\n")
+
+    print("\n" + "=" * 78)
+    print(markdown)
     print(f"JSON report: {json_path}")
 
     return 0 if failures == 0 else 1
+
+
+def _silence_genai_teardown_noise() -> None:
+    loop = asyncio.get_running_loop()
+    default = loop.get_exception_handler()
+
+    def handler(loop_, context):
+        exc = context.get("exception")
+        future = context.get("future")
+        coro_name = getattr(getattr(future, "get_coro", lambda: None)(), "__qualname__", "") or ""
+        if (
+            isinstance(exc, AttributeError)
+            and "_async_httpx_client" in str(exc)
+            and "aclose" in coro_name
+        ):
+            return
+        (default or loop_.default_exception_handler)(context)
+
+    loop.set_exception_handler(handler)
 
 
 def main() -> None:
@@ -127,8 +157,14 @@ def main() -> None:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", type=Path, default=DEFAULT_REPORT, help="JSON report output path")
+    parser.add_argument(
+        "--markdown",
+        type=Path,
+        default=None,
+        help="Append the markdown summary table to this file (e.g. $GITHUB_STEP_SUMMARY)",
+    )
     args = parser.parse_args()
-    sys.exit(asyncio.run(run_all(args.json)))
+    sys.exit(asyncio.run(run_all(args.json, args.markdown)))
 
 
 if __name__ == "__main__":

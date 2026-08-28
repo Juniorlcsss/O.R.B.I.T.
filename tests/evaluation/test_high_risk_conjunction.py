@@ -32,7 +32,7 @@ DV_MPS = 8.0
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET","FENGYUN_1C_DEB"
     specialists = harness.scripted_specialists(
         triage_factory=lambda: triage_payload(sat, debris),
         astro_factory=real_screening_payload(sat, debris),

@@ -28,7 +28,7 @@ DESCRIPTION = "Negotiated dv 13.9 vs approved 8.0 → HALLUCINATED_DELTA_V, miss
 
 async def execute(harness: EvaluationHarness):
     checks = []
-    sat, debris = "LANCASTER_ORBIT_1", "FENGYUN_1C_DEB"
+    sat, debris = "SIM_PROTECTED_ASSET", "SIM_COORDINATION_TARGET"
     specialists = harness.scripted_specialists(
         triage_factory=lambda: triage_payload(sat, debris),
         astro_factory=real_screening_payload(sat, debris),  # recommended_dv = 8.0
