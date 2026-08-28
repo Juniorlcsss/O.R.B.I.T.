@@ -18,7 +18,8 @@ import { postEvolution } from "./lib/api.js";
 import useKeyboardShortcuts from "./hooks/useKeyboardShortcuts.js";
 import { clockOf, countdown, humanise, isOurAsset, objectName, parseUtc } from "./lib/format.js";
 
-/** A mission that produced no terminal audit record is abandoned after this. */
+/** How long a mission may go without a terminal audit record before we treat
+ *  it as abandoned. */
 const MISSION_TIMEOUT_MS = 60_000;
 
 function Mark() {
@@ -39,7 +40,7 @@ function Mark() {
   );
 }
 
-/** One compact readout in the header rail: label, state dot, value. */
+/** One compact readout in the header rail: a label, a state dot, a value. */
 function Readout({ label, tone, value }) {
   return (
     <div className="flex items-center gap-1.5">
@@ -50,7 +51,15 @@ function Readout({ label, tone, value }) {
   );
 }
 
-function SystemStatus({ connected, worstFuel, armorTripped }) {
+function SystemStatus({ connected, worstFuel, armorTripped, provenance }) {
+  const simulated = provenance?.simulated;
+  const dataSegment =
+    simulated === false
+      ? { label: "DATA LIVE", tone: "text-nominal" }
+      : simulated === true
+        ? { label: "DATA SIMULATED", tone: "text-caution" }
+        : { label: "DATA ACQUIRING", tone: "text-fg-3" };
+
   const segments = [
     {
       key: "fleet",
@@ -81,6 +90,7 @@ function SystemStatus({ connected, worstFuel, armorTripped }) {
       label: armorTripped ? "ARMOR REJECTED" : "ARMOR ACTIVE",
       tone: armorTripped ? "text-alert" : "text-nominal",
     },
+    { key: "data", ...dataSegment },
   ];
 
   return (
@@ -217,7 +227,7 @@ export default function App() {
     if (response.status === "EXECUTION_AUTHORIZED") {
       setManeuver({ satId: request.sat_id, startedAt: Date.now() });
     }
-    // The fleet documented its own solution — surface the debrief entry.
+    // The fleet documented its own solution, so surface the debrief entry.
     if (response.conjunction_id) {
       setDebriefId(response.conjunction_id);
       setDebriefOpen(false);
@@ -314,6 +324,7 @@ export default function App() {
           connected={connected}
           worstFuel={fleetSummary.worstFuel}
           armorTripped={armorTripped}
+          provenance={provenance}
         />
 
         <div className="ml-auto flex items-center gap-3">
@@ -342,11 +353,12 @@ export default function App() {
             </button>
           )}
           {/*
-           * Opt-in overlay for the coordination exercise. Real conjunction
-           * data almost never pairs two manoeuvrable payloads, so the
-           * negotiation path has no live encounter to run against. This adds
-           * a clearly-labelled simulated pair to the map; it is off by
-           * default so the command picture is live unless asked otherwise.
+           * Opt-in overlay for the coordination exercise. Two manoeuvrable
+           * payloads almost never appear together in real conjunction data,
+           * which leaves the negotiation path with no live encounter to run
+           * against. This drops a clearly-labelled simulated pair onto the
+           * map. It stays off by default, so the command picture reads as
+           * live unless somebody asks for otherwise.
            */}
           <button
             onClick={() => setExerciseOn((on) => !on)}
@@ -398,10 +410,11 @@ export default function App() {
       </header>
 
       {/*
-       * A 401 means the key is missing or wrong, not that the fleet is down.
-       * Without this the console shows three unrelated small errors and reads
-       * as broken — the exact first-run experience of anyone who clones the
-       * repo and skips frontend/.env.example.
+       * A 401 says the key is missing or wrong. It does not say the fleet
+       * is down. Without this banner the console scatters three unrelated
+       * little errors and simply reads as broken, which is precisely what
+       * anyone cloning the repo and skipping frontend/.env.example would
+       * see first.
        */}
       {authRejected && (
         <div
@@ -418,10 +431,10 @@ export default function App() {
       )}
 
       {/*
-       * Stacked single column below `lg`. The children carry fixed heights
-       * that together exceed the viewport, and `body` is `overflow: hidden`,
-       * so without a scroller here the fleet status and armor log were simply
-       * clipped away with no way to reach them on a phone.
+       * Stacks to a single column below `lg`. The children carry fixed
+       * heights that add up to more than the viewport, and `body` is
+       * `overflow: hidden`, so with no scroller here the fleet status and
+       * armor log were clipped away entirely, unreachable on a phone.
        */}
       <main className="grid min-h-0 flex-1 gap-px bg-hair max-lg:flex max-lg:flex-col max-lg:overflow-y-auto lg:grid-cols-[320px_minmax(0,1fr)_360px]">
         <aside aria-label="Mission feed" className="min-h-0 bg-ink-800 max-lg:h-64 max-lg:shrink-0">

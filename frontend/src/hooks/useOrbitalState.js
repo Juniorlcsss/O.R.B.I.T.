@@ -6,7 +6,7 @@ const POLL_INTERVAL_MS = 2000;
 export default function useOrbitalState(intervalMs = POLL_INTERVAL_MS, exercise = false) {
   const [objects, setObjects] = useState([]);
   const [conjunctions, setConjunctions] = useState([]);
-  const [provenance, setProvenance] = useState({ simulated: true, source: null });
+  const [provenance, setProvenance] = useState({ simulated: null, source: null });
   const [generatedUtc, setGeneratedUtc] = useState(null);
   const [lastUpdatedMs, setLastUpdatedMs] = useState(null);
   const [error, setError] = useState(null);

@@ -9,16 +9,8 @@ const BREAKER_POLICY = "3 attempts, backoff 1s / 2s / 4s";
 const STATE_POLL_MS = 30_000;
 const ACTIVITY_TICK_MS = 5_000;
 
-/**
- * One node of the live ADK agent tree.
- *
- * Depth is drawn with a guide rail rather than raw indentation so the
- * delegation chain stays readable four levels down. Class name, model and
- * temperature all live on one quiet mono line under the agent's name — shown
- * as-is, because forcing `LlmAgent` through an uppercase transform produced
- * unreadable runs like `FLEETCOMMANDERPIPELINE`.
- */
-// Written out in full so Tailwind's scanner can see every class it must emit.
+// Spelled out rather than built by template, because Tailwind's scanner only
+// emits classes it can see as literal text.
 const STATE_TEXT = {
   running: "text-caution",
   ok: "text-nominal",
@@ -57,6 +49,12 @@ function AgentEvents({ entry }) {
 
 /**
  * One node of the live ADK agent tree.
+ *
+ * A guide rail carries the depth instead of raw indentation, which keeps the
+ * delegation chain readable four levels down. Class name, model and
+ * temperature share a single quiet mono line beneath the agent's name, left
+ * exactly as the API reports them: pushing `LlmAgent` through an uppercase
+ * transform produced unreadable runs like `FLEETCOMMANDERPIPELINE`.
  */
 function AgentNode({ node, depth = 0, activity, selected, onSelect }) {
   const [open, setOpen] = useState(depth < 2);
@@ -133,7 +131,8 @@ function AgentNode({ node, depth = 0, activity, selected, onSelect }) {
   );
 }
 
-// Written out in full so Tailwind's scanner can see every class it must emit.
+// Spelled out rather than built by template, because Tailwind's scanner only
+// emits classes it can see as literal text.
 const FUEL_TONES = {
   nominal: { text: "text-nominal", bar: "bg-nominal" },
   caution: { text: "text-caution", bar: "bg-caution" },
@@ -181,7 +180,8 @@ function FuelRow({ satellite, state, active, onSelect }) {
 }
 
 /**
- * A third-party spacecraft we screen against and negotiate with.
+ * A spacecraft we do not operate, screened against and where possible
+ * negotiated with.
  */
 function CounterpartyRow({ object, active, onSelect }) {
   return (
@@ -204,10 +204,11 @@ function CounterpartyRow({ object, active, onSelect }) {
       </div>
       <div className="mt-0.5 truncate font-mono text-2xs tracking-normal text-fg-3">
         {/*
-         * Live objects have no operator attribution we can honestly claim, so
-         * fall back to what the catalogue does tell us. "cannot manoeuvre" is
-         * a fact about debris; "manoeuvrability unknown" is a fact about the
-         * data — a catalogued payload may be defunct or passive by design.
+         * No operator attribution exists for live objects that we could
+         * honestly claim, so this falls back on what the catalogue does say.
+         * "cannot manoeuvre" states a fact about debris. "manoeuvrability
+         * unknown" states a fact about the data: a catalogued payload might
+         * be defunct, or passive by design.
          */}
         {object.operator
           ? `${object.operator} · counterparty`
@@ -224,6 +225,7 @@ export default function FleetStatus({ tree, treeError, satellites, provenance, f
   const [selectedAgent, setSelectedAgent] = useState(null);
   const [tick, setTick] = useState(0);
   const live = provenance?.simulated === false;
+  const provenanceKnown = provenance?.simulated === true || provenance?.simulated === false;
   const owned = useMemo(() => satellites.filter((sat) => sat.owned && !sat.exercise), [satellites]);
   const counterparties = useMemo(
     () => satellites.filter((sat) => !sat.owned && !sat.exercise),
@@ -232,7 +234,6 @@ export default function FleetStatus({ tree, treeError, satellites, provenance, f
   const exercise = useMemo(() => satellites.filter((sat) => sat.exercise), [satellites]);
   const satelliteIds = owned.map((sat) => sat.id).join(",");
 
-  // A quiet heartbeat so "running" can decay to "idle" without new events.
   useEffect(() => {
     const timer = setInterval(() => setTick((value) => value + 1), ACTIVITY_TICK_MS);
     return () => clearInterval(timer);
@@ -247,7 +248,7 @@ export default function FleetStatus({ tree, treeError, satellites, provenance, f
           try {
             return [id, await apiFetch(`/api/satellite_state/${encodeURIComponent(id)}`)];
           } catch {
-            // A missing Memory Bank record is a legitimate state, not an error.
+            // No Memory Bank record yet is a legitimate state, not a failure.
             return [id, null];
           }
         })
@@ -262,9 +263,7 @@ export default function FleetStatus({ tree, treeError, satellites, provenance, f
     };
   }, [satelliteIds]);
 
-  /*
-   * Publish the fleet's worst fuel margin to the header status strip.
-   */
+  // Hand the fleet's worst fuel margin up to the header status strip.
   const worstFuel = useMemo(() => {
     const readings = owned
       .map((sat) => states[sat.id]?.fuel_percentage)
@@ -281,9 +280,6 @@ export default function FleetStatus({ tree, treeError, satellites, provenance, f
   // intentional staleness heartbeat; it has no other role in the derivation.
   const activity = useMemo(() => deriveAgentActivity(feedEvents), [feedEvents, tick]);
   const breakers = useMemo(() => breakerRollup(activity), [activity]);
-
-  // No inner scroller: the whole right column scrolls as one surface, so the
-  // sections stack tight instead of leaving a dead gap above the armor log.
   return (
     <div className="flex flex-col divide-y divide-hair">
       <section className="px-4 py-3">
@@ -310,14 +306,14 @@ export default function FleetStatus({ tree, treeError, satellites, provenance, f
         <div className="flex items-baseline justify-between px-2">
           <h2 className="eyebrow">Protected asset</h2>
           <span className="font-mono text-2xs tracking-normal text-fg-3">
-            {live ? "live orbit" : "simulated"}
+            {!provenanceKnown ? "acquiring…" : live ? "live orbit" : "simulated"}
           </span>
         </div>
         {live && (
           /*
-           * In live mode the protected asset is a real spacecraft we do not
-           * operate. Its orbit is real; its fuel and thruster state are not
-           * telemetry and must never be presented as such.
+           * In live mode the protected asset is a real spacecraft belonging
+           * to someone else. Its orbit is real. Its fuel and thruster state
+           * are not telemetry, and must never be shown as though they were.
            */
           <p className="mt-1 px-2 font-mono text-2xs leading-relaxed tracking-normal text-fg-3">
             Orbit from live element set. Flight state below is simulated —
