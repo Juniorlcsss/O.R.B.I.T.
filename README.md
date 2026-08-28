@@ -2,489 +2,607 @@
 
 **Orchestrated Routing & Ballistic Incident Tracking**
 
-*Fortified Enterprise Fleet Track — All Things Agentic Hackathon 2026*
+*Fortified Enterprise Fleet Track, All Things Agentic Hackathon 2026*
 
+[![Tests](https://github.com/Juniorlcsss/ORBIT/actions/workflows/tests.yml/badge.svg)](https://github.com/Juniorlcsss/ORBIT/actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/Python-3.11+-informational)
 ![Google ADK](https://img.shields.io/badge/Google_ADK-2.7.1-blue)
-![Cloud Run](https://img.shields.io/badge/Cloud_Run-deployable-brightgreen)
+![Gemini](https://img.shields.io/badge/Gemini-3.5%20%2F%203.7%20Flash-4285F4)
+![Vertex AI](https://img.shields.io/badge/Vertex_AI-global_endpoint-orange)
+![Cloud Run](https://img.shields.io/badge/Cloud_Run-live-brightgreen)
 
----
+O.R.B.I.T. is a fleet of Google ADK agents that runs the whole satellite
+collision-avoidance loop with nobody in it: read the alert, propagate the
+orbits, compute collision probability, decide who moves, clear the manoeuvre
+through two independent safety gates, sign the command, and write the entire
+chain to an audit trail.
 
-## 🎯 The Problem: Kessler Syndrome
+## Submission links
 
-Space debris moves at **17,000 mph** (≈ 7.6 km/s in low Earth orbit). A single
-collision creates thousands of fragments, each becoming a new projectile in a
-self-sustaining cascade — the Kessler Syndrome.
-
-University CubeSat programs and small satellite operators bear exactly the same
-collision-avoidance responsibilities as NASA-sized control rooms, with none of
-the staffing:
-
-> Conjunction screening requires interpreting messy Two-Line Element sets,
-> running SGP4 propagations, computing collision probabilities, negotiating
-> with other operators over *who* moves, and executing fuel-budgeted maneuvers
-> — all under time pressure, around the clock.
-
----
-
-## 🚀 The Solution: O.R.B.I.T.
-
-A multi-agent fleet built on **Google ADK** that autonomously runs the entire
-conjunction-response pipeline:
-
-1. **Triages** messy inbound alerts into validated mission dossiers.
-2. **Screens conjunctions** with real SGP4 propagation and a three-stage
-   time-of-closest-approach refinement.
-3. **Assesses collision probability** using Chan's first-order Gaussian method
-   against NASA CARA / ESA risk bands.
-4. **Negotiates dodge responsibility** with external constellation operators
-   under fuel-budget diplomacy rules, with HMAC-SHA256 acknowledgements.
-5. **Gates every maneuver twice**: an LLM Safety Officer verdict followed by a
-   deterministic Model Armor sweep — hallucination guard, policy ceiling,
-   strategic fuel reserve, secret/PII scan.
-6. **Persists state** across sessions via a Firestore-backed memory bank, with
-   every decision correlated by a mission-scoped trace ID on an OTel-style
-   audit trail.
-
-### Verified behaviour
-
-| Check | Result |
+| | |
 |---|---|
-| Calibrated HIGH-risk scenario (`LANCASTER_ORBIT_1` × `FENGYUN_1C_DEB`) | **89 m miss @ TCA, Pc = 7.51e-4 → HIGH** |
-| Hallucination Guard | 13.9 m/s payload vs 10.0 m/s approved → REJECTED |
-| Policy Ceiling | 80 m/s request vs 50 m/s ceiling → REJECTED |
-| Strategic Fuel Reserve | burn projecting 2.75% < 5% reserve → REJECTED |
-| Secret/PII sweep | planted AWS key + email caught by pattern label; content never echoed |
-| End-to-end degraded mode (no LLM credentials) | triage breaker trips after 3 attempts → structured `HUMAN_DISPATCH_DEGRADED` + full audit replay |
-| Edge autonomy wiring | `gemma_edge_autopilot` live in `/api/agent_tree` with its single `emergency_dodge` tool; ROM rule executes above Pc 1e-3, holds below it, caps an 80 m/s request to the 50 m/s ceiling and refuses fuel-reserve breaches |
-| Edge autonomy end-to-end (no LLM reachable) | breaker trigger → `EDGE_AUTONOMY_ENGAGED` → `EDGE_LLM_UNAVAILABLE` → ROM verdict → `EDGE_AUTONOMOUS_DODGE_EXECUTED`, 12.0 m/s uplinked, Memory Bank fuel debited, debrief attached — every line tagged `EDGE_AUTONOMOUS` |
-| Autonomous Veo debrief | terminal mission → debrief `READY` attached to the conjunction record; simulated reconstruction renders fully offline, honest about its mode |
-| Lyria event cues | all 5 cue types served as valid 22.05 kHz mono WAV from `/api/audio/{event_type}` (0.32 s–1.70 s, 14–75 kB), memoised after first render; unknown types rejected with the available list |
-| Vector recall | HIGH-context queries rank historical HIGH encounters first (cosine 0.74 vs 0.39); recall tool returns *"Based on 3 similar past conjunctions, the executed delta-v range was 9.5–9.5 m/s"* |
-| Self-evolution applied | seeded over-reactions → analyst proposal → APPROVE → clamp clean → `CYCLE_APPLIED`; policy version bumped, diff logged, next screening uses evolved thresholds |
-| Gaming caught | gaming-temptation batch + wild proposal → CRITICAL G1/G3 flags, suspicion ≥0.7 → REJECTED, active policy byte-identical |
-| Envelope clamp | approved out-of-cap proposal → `CLAMPED_APPLIED` with recorded clamp actions; invariants empty; provenance=`clamped` |
-| Freeze breaker | repeated rejections → `FROZEN_HUMAN_REVIEW`, further triggers blocked, manual unfreeze restores operation |
-| Debate convergence | three scripted strategists within epsilon → consensus in round 0, judge skipped, transcript persisted with 3 openers |
-| Debate hallucination | cited miss distance 42 km vs actual 0.0889 km → CRITICAL HALLUCINATION flag, proposal discarded before selection |
-| Debate loop | verbatim repeat → STALLED + strategist frozen; remaining voices adjudicated by the judge inside budget |
-| Debate fallback | all proposals fabricated → `fallback_used=True` with the legacy single-specialist recommendation |
-| Debate safety intact | 80 m/s voice discarded pre-selection; mission executes on valid 8 m/s burn; armour still REJECTS an 80 m/s payload directly |
-| Persistent watches | duplicate WATCH ignored via idempotent `watch_id`; HIGH re-screen → `AWAITING_HUMAN_APPROVAL` gated behind explicit approval; LOW decline auto-closes; a fresh instance resumes open watches (crash recovery) |
-| Space-Track degradation | missing credentials raise `SpaceTrackUnavailable`; `fetch_real_tle` / `fetch_conjunction_screening` fall back to synthetic data with logged warning and provenance tags (`space-track/v1` vs `simulated_catalogue/v1`) |
-| API surface | all endpoint smoke checks passing against real `google-adk`, including `/api/debrief/{id}`, `/api/audio/{event_type}` and the watch lifecycle (`POST /api/watches`, approval, close) |
+| Live command center | https://orbit-command-center-ch7bwuuvpa-uc.a.run.app |
+| Demo video (approx. 4 min) | _add video URL_ |
+| Architecture diagram | _add diagram_ |
+| Code repository | this repo |
+| Track | Fortified Enterprise Fleet |
+
+### Required stack
+
+| Requirement | How O.R.B.I.T. meets it |
+|---|---|
+| Gemini 3.5 or newer, via Gemini API or Vertex AI | Every reasoning agent runs `gemini-3.5-flash` or `gemini-3.7-flash` through Vertex AI (`GOOGLE_GENAI_USE_VERTEXAI=TRUE`, `global` endpoint). Confirm against the running service with `GET /api/agent_tree` |
+| At least one Google agent framework | Google ADK 2.7.1: `LlmAgent`, `BaseAgent`, `Runner`, `Event`/`EventActions`, `FunctionTool` and `InvocationContext` across 13 modules |
+| At least one Google Cloud infrastructure service | Cloud Run (two services), Firestore (Memory Bank), Cloud Logging (audit trail), Secret Manager |
+| Bonus: additional Google AI models | Gemma 4 for onboard edge autonomy, Veo 3 for mission debriefs, Lyria 2 for mission-control audio |
+
+### Fortified Enterprise Fleet track
+
+| What the track asks for | Where it is |
+|---|---|
+| Agents catalogued for cross-department discovery | 15 versioned manifests in `geap_sim/agent_registry.py`, published live at `GET /api/agent_tree` with each agent's model, tools, temperature and identity scope |
+| Context held safely across weeks of asynchronous operation | `WatchCommander` re-screens a pair every N hours for as long as the encounter stays open, with idempotent watch IDs and crash recovery; the Firestore Memory Bank carries state and precedent between sessions |
+| Production data touched without violating policy | Live Space-Track data behind a self-limiting rate-budget client; per-secret Secret Manager access for two least-privilege service accounts; Model Armor's secret and PII sweep between every LLM verdict and any persistence or uplink |
+
+### Where to look
+
+| Judging criterion | Sections |
+|---|---|
+| Innovation and operational utility | [What the fleet does](#what-the-fleet-does), [Fleet Admiral](#fleet-admiral), [The coordination gap](#the-coordination-gap) |
+| Architectural discipline and tech stack | [Architectural discipline](#architectural-discipline), [GEAP pillar coverage](#geap-pillar-coverage), [Testing and evaluation](#testing-and-evaluation) |
+| Demo and production readiness | [Spin-up instructions](#spin-up-instructions), [Deploying to Cloud Run](#deploying-to-cloud-run), [Exercising a deployed fleet](#exercising-a-deployed-fleet), [Known limitations](#known-limitations) |
 
 ---
 
-## 📊 Judging Criteria → Evidence Map
+## The problem
 
-### Innovation & Operational Utility (40%)
+Debris in low Earth orbit moves at roughly 7.6 km/s. One collision produces
+thousands of fragments, each of which becomes a new projectile, which is the
+cascade Donald Kessler described in 1978.
 
-| Criterion | Evidence |
-|-----------|----------|
-| "Unlikely Hero" outside standard corporate roles | University CubeSat mission controllers and small-operator teams — real people with NASA-sized responsibility and no control room |
-| Complex enough to warrant multi-agent system | 4 specialists + 1 deterministic orchestrator, each with distinct tools, models and responsibilities |
-| Intelligently delegate tasks | `FleetCommanderPipeline` branches on validated risk bands: LOW → log & close; MEDIUM → advisory review held for human-in-the-loop; HIGH → full negotiation + dual-gate execution |
-| "Twist" — autonomous action over chat | HIGH-risk missions run end-to-end without a human: negotiate with external fleets, pass two independent safety gates, authorise uplink, persist fleet state — then hand back an auditable decision record |
+A university CubeSat programme carries the same collision-avoidance duty as a
+national agency and has none of the staffing to discharge it. Screening a
+conjunction means parsing element sets, running SGP4 propagations, computing a
+collision probability, working out whether you or the other operator should
+move, agreeing it with them, and executing a fuel-budgeted burn, all against a
+time of closest approach that does not wait for office hours.
 
-### Architectural Discipline & Tech Stack (30%)
-
-| Criterion | Evidence |
-|-----------|----------|
-| Strict separation of concerns | Each agent owns a scoped tool roster; the Safety Officer owns **zero** tools; the orchestrator owns zero tools and delegates everything |
-| Zero-trust enforcement | `AgentRegistry` manifests are deny-by-default; boot-time attestation verifies every declared tool **plus five negative controls**, or the process refuses to start |
-| Failure-tolerant routing | Circuit breakers: 3 attempts, 1 s/2 s/4 s exponential backoff, JSON-schema validation between attempts, persisted failure counters; tripped breakers degrade to `HUMAN_DISPATCH_DEGRADED` instead of guessing |
-| Model Armor guardrails | 4 deterministic checks executed *after* the LLM verdict and *before* any persistence/uplink: hallucination guard, policy ceiling, fuel reserve, secret sweep |
-| Observability | Every mission emits one `trace_id`; `AuditLogger` writes OTel-style JSON to stdout → Cloud Logging; `GET /api/armor_report/{trace_id}` replays the entire reasoning chain |
-
-### Demo & Production Readiness (30%)
-
-| Criterion | Evidence |
-|-----------|----------|
-| Live execution proof | Deploys to Cloud Run via `./deploy.sh`; `/api/conjunction_alert` returns structured mission outcomes |
-| Architecture transparency | `GET /api/agent_tree` renders the live fleet hierarchy — models, tools, temperatures included |
-| Reproducible setup | `requirements.txt`, `.env.example`, Dockerfile layer caching, idempotent deploy script |
-| Google Cloud proof | Cloud Run service, Firestore collections (`satellites/`, `conjunctions/`), Cloud Logging audit lines with severity levels |
+Each of those steps is well defined on its own. Joined up and automated, for an
+operator without a control room, they are not. That gap is what this project
+fills.
 
 ---
 
-## 🛠️ Tech Stack
+## What the fleet does
 
-| Component | Technology |
-|-----------|------------|
-| AI Models | Gemini 2.5 Pro (alert triage), Gemini 2.5 Flash (astrodynamics + negotiation), Gemini 3.5 Flash default for safety verdicts (env-tunable), **Gemma 3 (onboard edge autonomy)** |
-| Generative Media | **Veo 3** (autonomous mission-debrief video), **Lyria 2** (mission-control audio cues) |
-| Agent Framework | Google Agent Development Kit (ADK) 2.7.1 — mission pipeline + long-running watch supervisor |
-| Self-Evolution | Learning Analyst (Gemini 2.5 Flash) proposes ScreeningPolicy tuning; an adversarial **Meta-Critic** (Gemini 2.5 Pro) reviews it; a deterministic hard envelope clamps everything; a freeze breaker halts repeat offenders |
-| Orbital Mechanics | python-sgp4 propagation, three-stage TCA refinement, Chan's first-order Gaussian Pc; **live Space-Track.org elements & CDMs with synthetic fallback** |
-| Agent Memory | Firestore state + **semantic vector recall of past conjunctions** (Vertex `text-embedding-005` / deterministic local embedder) |
-| Cloud Infrastructure | Cloud Run, Firestore (async client), Cloud Logging |
-| Command Center | React + Vite, CesiumJS globe, Server-Sent Events live feed |
-| API Framework | FastAPI, Uvicorn |
-| Security | Constant-time API-key middleware, zero-trust Agent Registry, dual-layer maneuver gating |
-| Observability | Mission-scoped trace IDs, OTel-style structured JSON logging |
+An alert enters `POST /api/conjunction_alert` and the pipeline runs to a
+terminal decision without further input:
+
+1. **Triage** turns a messy inbound alert into a validated mission dossier.
+2. **Screening** propagates both objects with SGP4 and refines the time of
+   closest approach in three stages. Where 18th Space Defense Squadron has
+   published a CDM for the pair, the CDM takes precedence over our propagation.
+3. **Risk assessment** computes collision probability with Chan's first-order
+   Gaussian method and bands it against NASA CARA and ESA thresholds.
+4. **Debate** replaces the single specialist recommendation on HIGH-risk cases
+   with three strategists arguing under a deterministic moderator.
+5. **Coordination** asks the counterparty to move where a counterparty exists
+   and can move. Where it cannot, the stage is skipped structurally and the
+   mission proceeds to unilateral avoidance.
+6. **Safety** gates the manoeuvre twice: an LLM Safety Officer verdict followed
+   by four deterministic Model Armor checks that run after the verdict and
+   before anything is persisted or uplinked.
+7. **Execution** signs the command with HMAC-SHA256, debits fuel from the
+   Memory Bank, persists the conjunction record and renders a debrief.
+
+Every stage emits audit events under one mission-scoped trace ID, replayable in
+full through `GET /api/armor_report/{trace_id}`.
+
+***arch*** *System architecture: ground segment, space segment, the Google Cloud
+services behind them and the orbital data sources feeding the pipeline.*
+
+***arch*** *Mission pipeline sequence: alert through triage, screening, debate,
+coordination, safety gating and execution, including the two degradation paths.*
 
 ---
 
-## Advanced Architecture
+## Architectural discipline
 
-Three production-grade capabilities take O.R.B.I.T. beyond a reactive
-pipeline: the fleet remembers what it has seen, monitors what it cannot
-yet resolve, and runs on real orbital data when it can get it.
+**Decoupling.** Each agent owns a scoped tool roster. The Safety Officer owns
+zero tools, deliberately, so its verdict cannot be a function of anything it
+fetched. The orchestrator owns zero tools and delegates everything. `geap_sim/`
+isolates each Gemini Enterprise Agent Platform seam behind its own module so it
+can be swapped for the managed service one at a time.
 
-### 1. Vector Search Memory Bank — *the fleet learns*
+**State and memory.** A Firestore-backed Memory Bank holds satellite state,
+conjunction history and watch state, with per-event-loop client binding.
+Semantic vector recall ranks past encounters by cosine similarity and returns
+them with the actions that resolved them, so the astrodynamics agent cites
+precedent instead of reasoning from nothing.
 
-Every logged conjunction is semantically embedded (`text-embedding-005`
-on Vertex AI when credentials exist, a deterministic local hashing
-embedder otherwise — always audited at startup) and stored alongside its
-outcome. Before recommending a delta-v, the AstrodynamicsAgent calls
-`recall_similar_conjunctions(...)` and cites precedent in its reasoning:
+**Credentials.** No secrets in the repository, enforced by a deny-by-default
+`.gitignore`. Application Default Credentials locally, the injected runtime
+service account on Cloud Run. Two least-privilege service accounts, per-secret
+Secret Manager grants, constant-time API-key comparison, and a deploy script
+that refuses to publish an unauthenticated service.
 
-> *"Based on 3 similar past conjunctions, the executed delta-v range was 9.5–9.5 m/s (best similarity 0.83)."*
+**Failure handling.** Circuit breakers retry three times with 1/2/4 second
+backoff and JSON-schema validation between attempts, then degrade to a
+structured `HUMAN_DISPATCH_DEGRADED` response instead of guessing. Space-Track,
+Vertex embeddings, Veo, Lyria and Firestore each degrade to a labelled fallback
+and audit the reason.
 
-`MemoryBank.find_similar_conjunctions(context, top_k)` ranks stored
-encounters by cosine similarity and returns them **with the actions that
-resolved them** — Session State → Vector Search → Managed Cloud Memory,
-with the production `FindNearest` KNN path documented in-code.
+**Zero trust.** `AgentRegistry` manifests are deny-by-default with a per-agent
+`identity_scope`. Boot attestation verifies all 15 manifests and their declared
+tools, plus five negative controls proving the registry denies unregistered tool
+use, or the process refuses to start.
 
-### 2. Long-Running Persistent Watches — *the fleet monitors* — `agents/watcher.py`
+### GEAP pillar coverage
+
+| Pillar | Module | What it does here |
+|---|---|---|
+| Agent Registry | `geap_sim/agent_registry.py` | 15 versioned manifests with identity scopes, declared tool rosters and boot attestation; discovery through `GET /api/agent_tree` |
+| Agent Runtime | `agents/watcher.py` | Long-running asynchronous watches with a supervisor loop, crash recovery and multi-day re-screening |
+| Memory Bank | `geap_sim/memory_bank.py` | Firestore-persisted state, conjunction history, watch state and semantic vector recall |
+| Agent Identity | `geap_sim/agent_registry.py` | Every agent carries a scoped identity; unmanifested agents cannot boot |
+| Agent Gateway | `orbit.api.gateway` middleware in `app.py` | Single ingress: constant-time key enforcement, trace-ID assignment, per-request policy logging |
+| Model Armor | `geap_sim/model_armor.py` | Hallucination guard, policy ceiling, fuel reserve and secret/PII sweep between the verdict and any action |
+| Agent Observability | `geap_sim/observability.py` | OTel-style structured audit events and full reasoning-chain replay |
+
+---
+
+## How the pieces work
+
+### Multi-agent debate
+
+HIGH-risk conjunctions go to a panel of three strategists instead of a single
+specialist: `fuel_minimizer` (fuel is lifespan, find the smallest credible
+burn), `safety_maximizer` (a near miss is a failure) and `reassess` (burning is
+irreversible, propose hold and rescreen). All three run at temperature 0.6.
+
+The `DebateModerator` is an ADK `BaseAgent` and never an LLM. It runs round zero
+in parallel, then critique rounds. Four checks police every argument: a
+hallucination cross-check, where each cited Pc, miss distance, TCA and delta-v
+must match the real screening within tolerance; a physics check; a
+policy-envelope check; and SHA-256 loop detection, which freezes any strategist
+that repeats itself verbatim. Round count and wall-clock time are both capped. A judge at temperature 0 adjudicates only when several
+validated proposals remain, and may only choose among them. If nothing valid
+survives, the classic single-specialist recommendation is emitted with
+`fallback_used=True`.
+
+The debate can fail. The mission cannot fail because of the debate.
+
+### Self-evolving screening policy
+
+Resolved missions land outcome records. A Learning Analyst reviews the current
+`ScreeningPolicy` against them and must justify every proposed change with cited
+counts; thin evidence must produce no change. Then:
+
+- Five deterministic heuristics inspect the proposal before any LLM sees it:
+  convenience drift, attention drift, safety erosion (always CRITICAL),
+  oscillation across cycles, and unjustified magnitude on thin evidence.
+- An adversarial Meta-Critic at temperature 0 assumes the proposer is guilty and
+  returns APPROVE, CLAMP or REJECT with a 0 to 1 suspicion score.
+- Any CRITICAL flag, a REJECT verdict, or suspicion at or above 0.7 kills the
+  cycle outright.
+- A hard envelope clamp applies to everything, approved proposals included: each
+  parameter bounded to its safe range, limited to 20 percent of that range per
+  cycle, and ordering-checked. No LLM output is ever saved raw.
+- Three consecutive rejections freeze evolution until a human calls
+  `POST /api/evolution/unfreeze`.
+
+Because `screen_conjunction` reads the live policy for its risk bands, an
+applied cycle changes the next screening decision. A fixed Pc of 7.51e-4
+classifies HIGH under the default policy and MEDIUM once the threshold evolves
+past it, which is what `test_policy_changes_screening` asserts.
+
+On the live endpoint, `APPLIED` is not guaranteed and should not be. Whether a
+cycle applies depends on what the analyst proposes on the day. The deterministic
+proof that the apply path works end to end is
+`tests/evaluation/test_evolution_conservative_loosen.py`, which scripts the
+analyst, so the assertion tests the engine and not the weather.
+
+### Fleet Admiral
+
+The mission pipeline answers one question well: given this conjunction, what
+should this satellite do. It is deliberately blind to the rest of the
+constellation, because a pipeline that re-reasons about the whole fleet on every
+alert cannot be made deterministic.
+
+Real operators do not receive one alert. A fragmentation event produces a burst
+across many assets at once, and fuel is the constraint that couples them.
+Spending 12 m/s on a satellite at 8 percent fuel to clear an encounter that a
+sibling at 90 percent could also clear spends the wrong vehicle's remaining
+life. `agents/admiral.py` owns that coupling and nothing else.
+
+Four constraints keep it safe, not just clever. It is deterministic
+arithmetic with no LLM, because propellant allocation across a fleet should not
+be re-sampled on every invocation. It cannot weaken a gate, because it decides
+which satellites enter the pipeline and never what the pipeline may do once they
+are in. It can only subtract, because its two outcomes are `dodge` and
+`hold_and_reassess`, so it can decline a manoeuvre but never authorise one. And
+a single-alert batch is a no-op, because there is no constellation to optimise
+with one satellite in it.
+
+Each assigned mission runs in its own ADK session. The pipeline writes screening
+and verdict payloads to fixed session-state keys, so a shared session would let
+mission N+1 read mission N's screening.
+
+### Live Space-Track data
+
+`SpaceTrackClient` authenticates against Space-Track.org, fetches element sets
+and Conjunction Data Messages, and exposes `fetch_real_tle(satellite_id)` and
+`fetch_conjunction_screening(satellite_id)`. Two details of the live API deserve their own paragraph: both are easy to get
+wrong, and both fail silently behind a graceful-degradation path.
+
+The `tle`, `tle_latest` and `tle_publish` classes have been removed. Element
+sets come from the GP class filtered with `decay_date/null-val`, so a decayed
+catalogue number yields nothing at all instead of a stale, unpropagable elset.
+Conjunctions come from `cdm_public`. The request action is `query`, not `api`,
+and sort predicates are lowercase with a space: `orderby/EPOCH%20desc`.
+
+A CDM names two objects and ours may be either one, so `fetch_cdms` queries
+`SAT_1_ID` and `SAT_2_ID` separately and merges, recording which object is the
+counterparty, since that is the only party coordination can address.
+
+Rate-limit etiquette is enforced, not hoped for: one login per process,
+minimum request spacing, a rolling budget guard that fails closed into synthetic
+data before it can breach the published 30 per minute and 300 per hour ceilings,
+and a Memory Bank TTL cache defaulting to six hours. Exceeding those ceilings
+risks account suspension, so a would-be breach is treated as an outage rather
+than a retry. `python scripts/spacetrack_probe.py` verifies a live account and
+prints the raw `cdm_public` column names, so the field mapping is confirmed
+against the service instead of assumed from documentation.
+
+### Persistent watches
 
 Some conjunctions need multi-day assessment while tracking improves. The
-`WatchCommander` supervisor persists watch state through the MemoryBank
-and re-screens each pair every N hours:
-
-- **Idempotency** — one canonical `watch_id` per satellite×debris pair;
-  duplicate WATCH commands are audited and ignored.
-- **Crash recovery** — on startup the service reloads every open watch
-  from persistent storage and resumes overdue checks on the first tick.
-- **Human approval** — risk rising to HIGH parks the watch in
-  `AWAITING_HUMAN_APPROVAL`; only an explicit
-  `POST /api/watches/{id}/approval` routes it into a full fleet mission.
-- **Auto-decline** — risk falling to LOW closes the watch automatically.
+`WatchCommander` supervisor persists watch state through the Memory Bank and
+re-screens each pair every N hours. One canonical `watch_id` per pair makes
+duplicate WATCH commands idempotent. On startup the service reloads every open
+watch and resumes overdue checks on the first tick. Risk rising to HIGH parks
+the watch in `AWAITING_HUMAN_APPROVAL` until an explicit
+`POST /api/watches/{id}/approval`; risk falling to LOW closes it automatically.
 
 ```bash
 curl -X POST "$API/api/watches" -H "X-API-Key: $KEY" \
-  -d '{"sat_id": "LANCASTER_ORBIT_1", "debris_id": "FENGYUN_1C_DEB", "interval_hours": 12}'
+  -d '{"sat_id": "SIM_PROTECTED_ASSET", "debris_id": "FENGYUN_1C_DEB", "interval_hours": 12}'
 ```
 
-### 3. Real Space-Track.org Integration — *real orbital data* — `tools/space_track_api.py`
+### The coordination gap
 
-`SpaceTrackClient` authenticates against Space-Track.org, fetches live
-TLE element sets and Conjunction Data Messages, enforces rate-limit
-etiquette (one login per process, minimum request spacing, MemoryBank TTL
-cache defaulting to 6 h) and exposes two fleet tools:
-`fetch_real_tle(satellite_id)` and
-`fetch_conjunction_screening(satellite_id)`. Without
-`SPACETRACK_USERNAME` / `SPACETRACK_PASSWORD` both tools degrade loudly
-to the calibrated synthetic catalogue — every response states its provenance.
+The most interesting finding in this project is not about agents.
 
-> The fleet doesn't start from scratch, doesn't sleep, and doesn't pretend
-> simulation is telemetry.
+Conjunction data is standardised: CDMs issued by 18/19 SDS, served through
+Space-Track.org, in a documented CCSDS format. The coordination that follows is
+not. "Will you move, or shall we" happens over email and phone calls between
+assessment desks. Some operators coordinate through the Space Data Association,
+NASA runs CARA for its own assets, SpaceX auto-manoeuvres Starlink. None of that
+is a protocol a small operator can call.
+
+`tools/coordination.py` does not pretend the gap is closed. From one screening
+it emits a CCSDS-CDM-shaped KVN message carrying the keywords an assessment desk
+reads first, and the coordination request a human would send. Covariance blocks
+are omitted deliberately, because the screening uses a fixed covariance
+assumption and fabricated covariance would be worse than none.
+`channel: "protocol"` means a machine counterparty answered, which is the future
+state this project proposes. `channel: "human"` means no machine counterparty
+exists, which is the world today, and the mission records that it is awaiting an
+out-of-band reply. Nothing fabricates a counterparty's agreement.
+
+Two corrections the real feed forced. Payload-versus-payload conjunctions are
+rare but not absent, roughly one in ten encounters, and those are the only ones
+where negotiation is meaningful; a live STELLA / DMSP 5D-2 F9 pair screened HIGH
+at Pc 6.3e-4. And `OBJECT_TYPE = PAYLOAD` does not mean manoeuvrable, since
+STELLA is a passive laser-ranging sphere and DMSP 5D-2 F9 is defunct, so the
+fields in `tools/space_track_api.py` are named `possibly_manoeuvrable` and
+`manoeuvrability: "unknown" | "none"`.
+
+The fleet therefore skips negotiation structurally when the counterparty cannot
+manoeuvre, instead of hoping a model reasons its way there. Asking an LLM to
+negotiate with a fragment of Fengyun-1C reliably produces a standoff, a deadlock
+with an object that holds no position, which then escalates a HIGH-risk
+conjunction for an arbitration no human can perform either.
+`NEGOTIATION_SKIPPED / COUNTERPARTY_CANNOT_MANOEUVRE` is audited and every
+safety gate stays in force.
+
+### Consent is not authentication
+
+The Safety Officer's rule R2 requires a signature of at least 64 hex characters
+on every manoeuvre command. Two different claims were being conflated by one
+signature-shaped field. `ack_signature` asserts that the counterparty agreed,
+which is consent. `command_signature` asserts that this command is ours and
+unaltered, which is authentication.
+
+On the common path, debris, there is no counterparty to consent, so the fleet
+leaves the acknowledgement empty instead of forging an agreement that never
+happened. `geap_sim/command_signing.py` computes an HMAC-SHA256 over the fields
+that determine the physical effect of the burn. Signing our own command proves
+our integrity and still claims nothing about theirs.
 
 ---
 
-## 🧬 Self-Evolving Fleet (Phase 10)
+## Additional Google models
 
-The fleet improves itself — **but it can never escape the safety envelope.
-Every self-modification is adversarially reviewed, deterministically clamped,
-and logged with a before/after diff.**
+***arch*** *Space segment, ground segment and generative media: the Gemma edge
+autopilot and its handover trigger, the Fleet Admiral to pipeline fan-out, and
+the Veo and Lyria branches off terminal mission state.*
 
-### The learning loop
+**Gemma 4 edge autopilot** (`agents/edge_agent.py`). When a HIGH-risk
+conjunction is mid-flight and the ground pipeline cannot finish, the mission
+hands over to a satellite-side Gemma agent, which is the flight analogue of
+losing downlink during an incident. It holds exactly one tool
+(`emergency_dodge`), one 30-second decision window, and stricter physics than
+Model Armor applies: Pc above 1e-3, a burn under the 50 m/s ceiling, and no
+encroachment on the 5 percent strategic reserve. If inference itself is
+unavailable a hardcoded ROM rule decides instead, because the spacecraft never
+waits for a model. Every edge decision is tagged `EDGE_AUTONOMOUS` and the
+feature is kill-switchable with `ORBIT_ENABLE_EDGE_AUTONOMY=0`.
 
-1. **Evidence** — every resolved mission lands an `OutcomeRecord` (what was
-   decided, what it cost, and whether hindsight says we over- or
-   under-reacted) in the memory bank.
-2. **Propose** — the *Learning Analyst* (`gemini-2.5-flash`, zero tools)
-   reviews the current ScreeningPolicy against recent outcomes and must
-   justify every change with cited counts/rates; thin or ambiguous evidence
-   must produce NO CHANGE.
-3. **Deterministic gaming detection** — five pure-code heuristics inspect the
-   proposal *before any LLM review*: convenience drift (raising thresholds to
-   dodge work), attention drift (lowering them to look busy), safety erosion
-   (cutting margins — always CRITICAL), oscillation across cycles, and
-   unjustified magnitude on thin evidence.
-4. **Adversarial review** — the *Meta-Critic* (`gemini-2.5-pro`,
-   temperature 0) assumes the proposer is guilty: every change must be
-   justified by concrete evidence, and its verdict is APPROVE / CLAMP / REJECT
-   with a 0–1 suspicion score.
-5. **Fail-closed rejection** — any CRITICAL flag, a REJECT verdict, or a
-   suspicion score ≥ 0.7 kills the cycle outright.
-6. **Hard envelope clamp — ALWAYS applied**, even to APPROVED proposals:
-   every parameter is bounded to its safe range, limited to ≤20 % of its
-   range per cycle, and ordering-checked (`pc_medium < pc_high`). This step
-   is pure deterministic code; no LLM output is ever saved raw.
-7. **Freeze breaker** — three consecutive rejections (or repeated
-   envelope-pushing) freezes evolution entirely until a human calls
-   `POST /api/evolution/unfreeze`.
+**Veo 3 mission debriefs** (`tools/debrief_generator.py`). When a mission
+terminates, a background task renders a summary of the encounter, generates a
+debrief video and attaches it to the conjunction record in Firestore.
+`GET /api/debrief/{conjunction_id}` serves generation status plus the artifact.
 
-And because `screen_conjunction` reads the live policy for its risk bands,
-an applied cycle changes the very next screening decision — this is real
-behaviour change, verified by `test_policy_changes_screening`: a fixed Pc of
-7.51e-4 classifies HIGH under the default policy and MEDIUM after the
-threshold evolves past it.
+**Lyria 2 audio cues** (`tools/audio_generator.py`). Five event classes own a
+generated audio identity, served as memoised WAV from
+`GET /api/audio/{event_type}` and played by the mission feed as events arrive
+over SSE.
 
-### Endpoints & demo flow
+Veo and Lyria calls are gated behind `ORBIT_ENABLE_REAL_VEO=1` and
+`ORBIT_ENABLE_REAL_LYRIA=1`. Without them, or without Vertex credentials, both
+degrade to clearly labelled deterministic simulations, an SVG reconstruction and
+a procedural synth cue, so the demo works anywhere and never presents a mock as
+a real render.
 
-```bash
-# Seed the temptation batch and pull the trigger:
-curl -X POST "$API/api/evolution/trigger" -H "X-API-Key: $KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"trigger_source": "manual", "seed": "gaming_temptation"}'
-# → REJECTED with a CRITICAL G1/G3 flag and "suspected metric gaming".
+---
 
-curl "$API/api/evolution/policy"  -H "X-API-Key: $KEY"   # current policy + envelope
-curl "$API/api/evolution/history" -H "X-API-Key: $KEY"   # before/after cycle trail
-curl "$API/api/evolution/status"  -H="X-API-Key: $KEY"   # frozen? counters? last trace?
-```
+## Tech stack
 
-`GET /api/agent_tree` now shows both hierarchies: the mission fleet and the
-evolution engine with its analyst + Meta-Critic beneath an `orbit_fleet`
-root.
-
-| Layer | What stops it |
+| Component | Technology |
 |---|---|
-| Deterministic heuristics (G1–G5) | pattern-matched self-serving drift |
-| Meta-Critic LLM | subtle, narrative-level gaming |
-| Hard envelope + max-step clamp | anything at all — even APPROVED proposals |
-| Freeze breaker | the evolution process itself, repeatedly misbehaving |
+| Reasoning models | Gemini 3.7 Flash (triage, meta-critic, debate judge), Gemini 3.5 Flash (astrodynamics, negotiation, safety verdicts, strategists, learning analyst), all through Vertex AI |
+| Edge model | Gemma 4 |
+| Generative media | Veo 3 (debrief video), Lyria 2 (event audio) |
+| Agent framework | Google ADK 2.7.1 |
+| Orbital mechanics | python-sgp4 propagation, three-stage TCA refinement, Chan's first-order Gaussian Pc |
+| Orbital data | Space-Track.org GP element sets and `cdm_public` CDMs, with a calibrated synthetic catalogue for tests |
+| Memory | Firestore async client plus semantic vector recall (Vertex `text-embedding-005`, deterministic local embedder offline) |
+| Cloud | Cloud Run, Firestore, Cloud Logging, Secret Manager |
+| API | FastAPI, Uvicorn, Server-Sent Events |
+| Command center | React, Vite, CesiumJS |
+| Security | Constant-time API-key middleware, zero-trust agent registry, dual-layer manoeuvre gating, HMAC-SHA256 command signing |
 
 ---
 
-## 🗣️ Multi-Agent Conjunction Debate (Phase 11)
+## Testing and evaluation
 
-For HIGH-risk conjunctions the single astrodynamics proposal is upgraded to
-a structured **debate among three strategists**, refereed by a deterministic
-moderator — and the whole safety chain downstream is untouched.
+The evaluation suite is hermetic by design. The real pipeline, Model Armor,
+Memory Bank and audit trail run unmodified while the four specialist LLMs are
+substituted with schema-valid scripted agents (`tests/evaluation/harness.py`).
+No network, no credentials, no cost, and every orchestration guarantee below is
+exercised by production code.
 
-**O.R.B.I.T. now demonstrates all three ADK orchestration patterns:**
-sequential pipeline (Phase 2), persistent long-running memory (Phase 8),
-and **iterative multi-agent debate (Phase 11)**.
+```bash
+python tests/evaluation/run_evaluation.py    # exits non-zero on any failure
+```
 
-### The panel
+Latest full run: **117 of 117 checks green across 21 scenarios.**
 
-| Voice | Philosophy | Temperature |
+| Group | Scenarios | What it proves |
 |---|---|---|
-| `fuel_minimizer` | Fuel is lifespan; find the smallest credible burn — or none | 0.6 |
-| `safety_maximizer` | A near-miss is a failure; margins exist to be respected | 0.6 |
-| `reassess` | Burning is irreversible; propose hold-and-rescreen under uncertainty | 0.6 |
+| Risk banding | `low_risk_conjunction`, `medium_risk_hitl`, `high_risk_conjunction` | LOW never invokes negotiation or armor; MEDIUM always lands behind a human; the calibrated HIGH pair executes end to end with all four armor checks passing, fuel debited at exactly 0.5 percent per m/s, and the debrief generated on the same trace |
+| Safety gates | `hallucination_guard`, `policy_ceiling`, `fuel_guard`, `pii_sweep` | Payload drift (13.9 against 8.0 m/s), an 80 m/s ceiling breach, a reserve-breaching burn at 6 percent fuel and a planted AWS key are each blocked with the correct violation label, and the key is never echoed into the audit trail |
+| Degradation | `circuit_breaker` | A dead provider trips after exactly three attempts into structured human dispatch |
+| Debate | six `debate_*` scenarios | Convergence, a fabricated citation disqualifying its author, a verbatim repeater frozen mid-debate, all three settling, safe total collapse, and the downstream armor still rejecting an over-ceiling payload |
+| Evolution | four `evolution_*` scenarios plus `policy_changes_screening` | Gaming rejected, envelope clamp applied to an approved proposal, freeze after repeat rejections, and an applied cycle changing the next screening decision |
+| Constellation | `constellation_optimization` | A byte-stable plan on replay, and no action outside `{dodge, hold}` ever emitted |
+| Coordination | `debris_skips_negotiation` | Negotiation skipped structurally when the counterparty cannot manoeuvre |
 
-The `DebateModerator` is **an ADK BaseAgent — deterministic code, never an
-LLM**. It runs round 0 in parallel, then critique rounds, enforcing:
-
-- **Hallucination cross-check** — every cited Pc / miss distance / TCA /
-  recommended-dv must match the real screening within tolerance;
-  unverifiable numbers = CRITICAL flag = proposal discarded.
-- **Physics check** — strategy enum + delta-v inside [0, 50 m/s].
-- **Policy-envelope check** — burn targets inside the live ScreeningPolicy.
-- **Loop detection** — SHA-256 over each argument's canonical form; a
-  verbatim repeat freezes that strategist (STALLED flag).
-- **Hard budgets** — `ORBIT_DEBATE_MAX_ROUNDS` (default 2) plus a wall-clock
-  cap (`ORBIT_DEBATE_TIME_BUDGET_S`, default 45).
-- **Judge** (`gemini-2.5-pro`, temperature 0) — only when several validated
-  proposals remain unconverged; it may *only choose* among them.
-- **Graceful fallback** — if nothing valid survives, the classic single-
-  specialist recommendation is emitted with `fallback_used=True`. The debate
-  can fail; the mission cannot — because of the debate.
-
-The winning proposal feeds negotiation → SafetyOfficer → ModelArmor exactly
-as before, and the full transcript (arguments, hashes, flags, judge verdict)
-is persisted under the mission trace ID:
-
-```bash
-curl "$API/api/debate/transcript/<trace_id>" -H "X-API-Key: $KEY"
-```
-
-Proven by the suite: an over-ceiling 80 m/s voice is discarded before
-selection, a fabricated citation disqualifies its author, a verbatim
-repeater gets frozen mid-debate while the others finish under the judge,
-total collapse falls back safely, and the downstream armour still rejects
-an over-ceiling payload (belt and braces).
-
----
-
-## 🎁 Additional AI Integrations
-
-Three extra Google models give the fleet senses beyond Gemini reasoning:
-an onboard brain for when Earth goes quiet, a documentarian for when the
-mission ends, and a soundtrack for while it happens.
-
-```mermaid
-flowchart TB
-    subgraph space["🛰️ Space segment — autonomous when Earth is out of reach"]
-        EDGE["Gemma Edge Autopilot<br/>exactly 1 tool: emergency_dodge()<br/>Pc > 1e-3 · dv ≤ 50 m/s · fuel ≥ 5% · 30 s window"]
-        SAT[("CubeSat")]
-        EDGE --- SAT
-    end
-
-    subgraph ground["🌍 Ground segment — Google ADK fleet"]
-        FC["FleetCommanderPipeline<br/>(deterministic control plane)"]
-    end
-
-    subgraph media["🎬 Autonomous reporting & sound"]
-        VEO["Veo 3 mission debriefs<br/>GET /api/debrief/{conjunction_id}"]
-        LYRIA["Lyria audio cues<br/>GET /api/audio/{event_type}"]
-    end
-
-    FC -->|"negotiation or armour breaker trips on HIGH risk"| EDGE
-    FC -.->|"terminal mission status"| VEO
-    FC -.->|"SSE audit stream"| LYRIA
-```
-
-### 1. Gemma Edge Autopilot — `agents/edge_agent.py`
-
-When a HIGH-risk conjunction is mid-flight and the ground pipeline cannot
-finish (negotiation or armour circuit breaker trips), the mission hands over
-to a satellite-side **Gemma** agent — the flight analogue of losing downlink
-during an incident. It holds exactly one tool (`emergency_dodge`), one
-30-second decision window, and stricter physics than Model Armor applies:
-Pc must exceed 1e-3, the burn stays under the 50 m/s ceiling and never eats
-into the 5% strategic fuel reserve. If inference itself is unavailable, a
-hardcoded ROM rule decides instead — the spacecraft never waits for a model.
-Every edge decision is audited with the **`EDGE_AUTONOMOUS`** tag, and the
-feature is kill-switchable via `ORBIT_ENABLE_EDGE_AUTONOMY=0`.
-
-### 2. Veo Mission Debriefs — `tools/debrief_generator.py`
-
-The fleet doesn't just solve problems — it documents them. When a mission
-terminates (`EXECUTION_AUTHORIZED`, `MANEUVER_BLOCKED`, or an autonomous
-edge dodge), a background task renders a cinematic summary of the encounter,
-generates a debrief video with **Veo 3**, and attaches it to the conjunction
-record in Firestore. `GET /api/debrief/{conjunction_id}` serves generation
-status plus the artifact, and the command center surfaces a MISSION DEBRIEF
-button the moment a conjunction resolves.
-
-### 3. Lyria Mission-Control Audio — `tools/audio_generator.py`
-
-You can hear the fleet think. Each key event class owns a generated audio
-identity — rising alert (`ALERT_DETECTED`), resolving chord
-(`MANEUVER_AUTHORIZED`), low cautionary drone (`MANEUVER_BLOCKED`), urgent
-triple-beep (`HUMAN_DISPATCH`) and an edge-autonomy chirp
-(`EDGE_AUTONOMOUS`) — produced by **Lyria 2** and served as memoised WAV
-from `GET /api/audio/{event_type}`. The MissionFeed plays the matching cue
-as events stream in over SSE.
-
-> **Honesty note:** Veo and Lyria calls are gated behind
-> `ORBIT_ENABLE_REAL_VEO=1` / `ORBIT_ENABLE_REAL_LYRIA=1`. Without them (or
-> without Vertex credentials) both integrations degrade to clearly-labelled
-> deterministic simulations — an SVG reconstruction of the encounter and a
-> procedural synth cue respectively — so the demo works anywhere and never
-> pretends a mock is a real render.
-
----
-
-## Testing & Evaluation
-
-The suite is **hermetic by design**: the real `FleetCommanderPipeline`,
-Model Armour, memory bank and audit trail run unmodified while the four
-specialist LLMs are substituted with schema-valid scripted agents (see
-`tests/evaluation/harness.py`). No network, no credentials, no cost —
-and every orchestration guarantee below is exercised by production code.
-
-### Automated evaluation — one command
-
-```bash
-python tests/evaluation/run_evaluation.py        # exits non-zero on any failure
-```
-
-Latest full-suite result (**42/42 checks green**, total ≈ 1.5 s):
-
-| Test | Result | Checks | Duration |
-|---|---|---|---|
-| circuit_breaker | PASS | 6/6 | 860 ms |
-| fuel_guard | PASS | 4/4 | 7 ms |
-| hallucination_guard | PASS | 5/5 | 5 ms |
-| high_risk_conjunction | PASS | 9/9 | 608 ms |
-| low_risk_conjunction | PASS | 4/4 | 3 ms |
-| medium_risk_hitl | PASS | 6/6 | 3 ms |
-| pii_sweep | PASS | 4/4 | 4 ms |
-| policy_ceiling | PASS | 4/4 | 5 ms |
-
-Highlights proven per test: the calibrated HIGH pair executes end-to-end
-with all four armour checks PASSing, fuel debited exactly 0.5 %/m·s⁻¹ and
-the debrief auto-generated on the same trace; LOW risk never invokes
-negotiation or armour; MEDIUM always lands behind a human; planted payload
-drift (`13.9 vs 8.0 m/s`), an `80 m/s` ceiling breach, a reserve-breaching
-burn at 6 % fuel and a fake AWS key are each blocked with the correct
-violation label — the key never once echoed into the audit trail; and a
-dead provider trips after exactly three attempts into structured human
-dispatch.
-
-### Chaos engineering — destructive, gated
+### Chaos engineering
 
 ```bash
 python tests/chaos/chaos_runner.py --i-know-this-is-destructive
 ```
 
-Four scenarios, all currently holding:
-
-| Scenario | System behaviour under attack |
+| Scenario | Behaviour under attack |
 |---|---|
-| `chaos_kill_agent` — orbital-mechanics node destroyed mid-fleet | breaker retries ×3 → trips → `HUMAN_DISPATCH_DEGRADED`; zero fuel touched |
-| `chaos_corrupt_state` — negative / NaN / garbage vehicle records | read-boundary sanitisation (`SATELLITE_STATE_CORRUPTED_SANITISED`) keeps armour arithmetic finite: negative fuel → blocked at reserve, NaN → clean execution |
-| `chaos_network_partition` — refused sockets & black-hole stalls | both degrade cleanly; measured: refused 0.04 s vs 1.5 s hang → 4.55 s (per-call LLM timeouts remain a documented hardening item) |
-| `chaos_rapid_fire` — 100 concurrent missions | 100/100 terminal, unique trace per mission, **~160 missions/s** orchestration throughput |
+| `chaos_kill_agent` | Orbital-mechanics node destroyed mid-mission: breaker retries three times, trips, `HUMAN_DISPATCH_DEGRADED`, zero fuel touched |
+| `chaos_corrupt_state` | Negative, NaN and garbage vehicle records: read-boundary sanitisation keeps armor arithmetic finite, with negative fuel blocked at the reserve and NaN executing cleanly |
+| `chaos_network_partition` | Refused sockets and black-hole stalls both degrade cleanly; refused in 0.04 s against a 1.5 s hang becoming 4.55 s |
+| `chaos_rapid_fire` | 100 concurrent missions, 100 terminal, a unique trace each, around 160 missions per second of orchestration throughput |
 
-Chaos engineering paid for itself immediately: the corruption scenario
-exposed that a `NaN` fuel value could slip the original clamp chain, which
-is why `MemoryBank.get_satellite_state` now sanitises non-finite and
-out-of-range fields at the read boundary and audits every repair.
+Chaos testing paid for itself on the first run. The corruption scenario exposed
+that a NaN fuel value could slip the original clamp chain, which is why
+`MemoryBank.get_satellite_state` now sanitises non-finite and out-of-range
+fields at the read boundary and audits every repair.
 
-### Performance benchmarks
+### Benchmarks
 
 ```bash
-python tests/benchmarks/performance.py --save   # writes report.md / report.json
+python tests/benchmarks/performance.py --save
 ```
 
 | Benchmark | Samples | Mean | p50 | p95 | p99 |
 |---|---|---|---|---|---|
 | SGP4 conjunction screening | 150 | 0.61 ms | 0.60 ms | 0.68 ms | 1.04 ms |
-| Model Armor 4-check inspection | 200 | 0.09 ms | 0.09 ms | 0.11 ms | 0.14 ms |
-| Memory-bank state read | 300 | <0.01 ms | <0.01 ms | 0.01 ms | 0.01 ms |
-| Memory-bank burn write | 300 | 0.03 ms | 0.03 ms | 0.04 ms | 0.06 ms |
+| Model Armor four-check inspection | 200 | 0.09 ms | 0.09 ms | 0.11 ms | 0.14 ms |
+| Memory Bank state read | 300 | <0.01 ms | <0.01 ms | 0.01 ms | 0.01 ms |
+| Memory Bank burn write | 300 | 0.03 ms | 0.03 ms | 0.04 ms | 0.06 ms |
 | End-to-end mission (offline harness) | 40 | 23.9 ms | 4.34 ms | 5.18 ms | 784 ms |
 | `import app` cold-start floor | 3 | 2053 ms | 1975 ms | 2199 ms | 2199 ms |
 
-Reading the table: a complete conjunction screen costs well under a
-millisecond of CPU, the entire deterministic safety gate costs less than
-a tenth of one, and a mission's orchestration overhead sits in single-digit
-milliseconds — meaning end-to-end latency in production is dominated by
-LLM inference, exactly where it should be dominated. The p99 mission
-outlier is first-run module warm-up inside the measurement loop. The
-`import app` figure is a local floor for Cloud Run cold starts (true
-platform cold start depends on container pull + runtime and is measured on
-the deployed service); set `ORBIT_BENCH_URL=http://localhost:8080` against
-a running instance to append live HTTP latency to the same report.
+A complete screen costs well under a millisecond of CPU and the entire
+deterministic safety gate costs less than a tenth of one, which means production
+latency is dominated by LLM inference, exactly where it should be. The p99
+mission outlier is first-run module warm-up inside the measurement loop. Set
+`ORBIT_BENCH_URL` against a running instance to append live HTTP latency to the
+same report.
 
 ---
 
-## 🚀 Quick Start
+## Spin-up instructions
 
-### Prerequisites
+Run it locally in five steps, or skip to [Deploying to Cloud Run](#deploying-to-cloud-run)
+for the single-command cloud path. Everything below has been executed on a clean
+checkout.
 
-- Python 3.11+
-- A Google Cloud project with **Cloud Run**, **Firestore** and **Vertex AI** enabled
-- `gcloud` CLI installed and authenticated
+### 1. Prerequisites
 
-### Local development
+- Python 3.11 or newer
+- Node 20 or newer, for the command center only
+- A Google Cloud project with Vertex AI, Firestore and Cloud Run enabled
+- The `gcloud` CLI, authenticated
+- Optional: a Space-Track.org account for live orbital data. Without one the
+  fleet runs on the calibrated synthetic catalogue and says so on screen.
+
+### 2. Two Vertex locations, on purpose
+
+Mixing these up produces a confusing `404 NOT_FOUND`.
+
+| What | Location | Why |
+|---|---|---|
+| Gemini 3.x reasoning | `global` | Gemini 3.x is served only from the global endpoint; regional endpoints return 404 for every 3.x model |
+| Veo and Lyria | `us-central1` | Generative media is regional only and is not on the global endpoint, the exact mirror image |
+| Cloud Run service | `us-central1` | Unrelated to either; this is just where the container runs |
+
+`GOOGLE_CLOUD_LOCATION=global` covers the first, `ORBIT_MEDIA_LOCATION` the
+second, `deploy.sh --region` the third.
+
+### 3. Backend
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/Juniorlcsss/ORBIT
 cd ORBIT
 pip install -r requirements.txt
-
 cp .env.example .env
-# edit .env: set GOOGLE_CLOUD_PROJECT and ORBIT_API_KEY
-
-uvicorn app:app --reload --port 8080
 ```
 
-No GCP credentials? Everything still runs: the memory bank falls back to
-in-process storage, and missions that need LLMs degrade through the circuit
-breaker to a clean `HUMAN_DISPATCH_DEGRADED` response — the failure-tolerant
-path is itself demonstrable offline.
+Set at minimum:
 
-### Deploy to Cloud Run
+```bash
+GOOGLE_CLOUD_PROJECT=your-project-id
+GOOGLE_GENAI_USE_VERTEXAI=TRUE
+GOOGLE_CLOUD_LOCATION=global
+GOOGLE_APPLICATION_CREDENTIALS=/abs/path/to/service-account.json
+ORBIT_API_KEY=$(openssl rand -hex 32)
+```
+
+`GOOGLE_GENAI_USE_VERTEXAI=TRUE` is not optional. Without it the google-genai
+SDK targets the Gemini Developer API, looks for a `GOOGLE_API_KEY` that does not
+exist, and every agent degrades through the circuit breaker to
+`HUMAN_DISPATCH_DEGRADED`.
+
+```bash
+uvicorn app:app --reload --port 8080
+curl -s localhost:8080/health
+# {"status":"healthy","firestore_connected":true,"memory_backend":"firestore","api_key_enforced":true}
+```
+
+Check two startup log lines before trusting a run.
+`MEMORY_BANK_BACKEND_SELECTED` should say `FIRESTORE`, and there should be no
+`API_KEY_ENFORCEMENT_DISABLED` line. If you see `MEMORY` and that warning
+together the environment did not load, and the UI will still look healthy,
+because with no API key the gateway stops enforcing auth.
+`firestore_connected: false` means the Memory Bank degraded, and
+`MEMORY_BANK_FIRESTORE_UNAVAILABLE` names the reason.
+
+Without GCP credentials everything still runs. The Memory Bank falls back to
+in-process storage, vector recall to a deterministic local embedder, and
+missions that need LLMs degrade to a clean `HUMAN_DISPATCH_DEGRADED`, so the
+failure-tolerant path is itself demonstrable offline.
+
+### 4. Command center
+
+```bash
+cd frontend
+npm install
+cp .env.example .env.local     # then set VITE_ORBIT_API_KEY
+npm run dev                    # http://localhost:5173, proxies /api to :8080
+```
+
+`VITE_ORBIT_API_KEY` must match `ORBIT_API_KEY` in the backend's root `.env`. If
+it is missing the dev server loads fine but every panel stays empty and the
+backend logs a wall of `AUTH_REJECTED` lines. Vite only exposes `VITE_`-prefixed
+variables and only reads them at dev-server start, so restart after editing.
+Point at a different backend with `ORBIT_BACKEND_URL`, which is deliberately not
+`VITE_`-prefixed so it cannot reach the client bundle.
+
+### 5. Why the deployed console holds no API key
+
+Vite inlines every `VITE_*` variable into the JavaScript at build time, so
+whatever it holds becomes a plaintext string literal any visitor can read. There
+is no way to keep a secret in a browser bundle; the only question is whether you
+have noticed. `VITE_ORBIT_API_KEY` is therefore a local-development variable
+only. Three layers keep it out of the image. `.gitignore` keeps
+`frontend/.env.local` out of the repo; `.dockerignore` keeps it out of the build
+context; and `Dockerfile.frontend` runs `rm -f .env .env.*` before `npm run
+build`, so editing either of the first two cannot quietly reopen the hole.
+
+The resulting bundle contains no credential. esbuild folds `if (API_KEY)` to a
+constant false and drops the header assignment entirely, so the browser does not
+even send an `X-API-KEY`. nginx attaches it instead, from the runtime
+environment:
+
+```nginx
+proxy_set_header X-API-KEY "${ORBIT_API_KEY}";
+```
+
+That is why the console runs on Cloud Run and not a static host. A static
+host gives you no server-side hop. The browser has to call the API directly, so
+it has to carry the credential, and two routes on that surface spend real money:
+`POST /api/conjunction_alert` runs the fifteen-agent pipeline, and
+`POST /api/evolution/trigger` runs a policy-mutating cycle. Those two carry their
+own nginx rate limit, 10 per minute with burst 3, separate from the roomy bucket
+the two-second telemetry poll needs. Treat it as a speed bump against runaway
+loops, not a security control: its key is the client-supplied
+`X-Forwarded-For`, which anyone can spoof. The hard cost ceiling is
+`--max-instances` plus the Vertex AI quota.
+
+Because the browser reaches `/api` through the same origin that served the page,
+no CORS grant is involved in the real traffic path either.
+
+### Accessibility and multimodal UX
+
+The console is a three-panel dark console: mission feed on the left, CesiumJS
+globe in the centre, fleet status and armor log on the right. Every
+accessibility control lives in the gear menu and persists to `localStorage`.
+
+Four colour palettes (default, deuteranopia, protanopia, tritanopia) plus
+monochrome. Every semantic colour resolves through a CSS custom property, so
+switching preset re-tints the interface and the Cesium entities in one step,
+with no rebuild and no second source of truth. Colour is never the only channel:
+any non-default preset turns on shape coding automatically, and monochrome
+forces it, because a palette with no hue cannot encode risk band by colour.
+
+Reduced motion is seeded from `prefers-reduced-motion` and overridable in either
+direction. Effects that carry state settle into a static form instead of
+vanishing, so the high-risk perimeter stops pulsing but stays drawn. Blinking
+stays well outside the 3 to 55 Hz seizure-risk band of WCAG 2.3.1. High contrast
+and a type scale with Atkinson Hyperlegible are also available. Space triggers
+an alert, F fullscreens the globe, ? opens the shortcut reference and Esc closes
+the open dialog; global shortcuts are suppressed while a dialog is open and
+while focus is in a text field, because Space is both the alert trigger and the
+space bar. All dialogs trap focus and restore it on close.
+
+Audio is a real channel, not decoration: the Lyria cues give each event
+class its own identity, so an operator watching the globe hears the difference
+between an authorised manoeuvre and a blocked one.
+
+The header strip is derived from live state, never hardcoded. `FLEET ONLINE`
+follows the SSE connection. The fuel segment reports the worst margin across
+owned assets, and reads `FUEL UNKNOWN` where no Memory Bank record exists
+instead of inventing a number. The data segment reads `DATA LIVE`,
+`DATA SIMULATED` or `DATA ACQUIRING`, because that distinction is load-bearing
+and belongs on screen where an operator can see it. The
+high-risk alarm is scoped to conjunctions involving an asset this fleet
+commands; screening the whole public catalogue made it permanently red, and an
+indicator that is always on carries no information.
+
+---
+
+## Deploying to Cloud Run
 
 ```bash
 export GOOGLE_CLOUD_PROJECT="your-project-id"
@@ -494,204 +612,247 @@ chmod +x deploy.sh
 ./deploy.sh
 ```
 
-The script builds the image, creates a least-privilege service account
-(`roles/datastore.user` + `roles/aiplatform.user`), deploys scale-to-zero with
-a 3-instance cost cap, and prints a ready-to-paste curl command.
+The script deploys two scale-to-zero services capped at three instances each:
+`orbit-fleet-commander` for the API and `orbit-command-center` for the console.
+It enables the six APIs it needs, creates the Firestore database if absent, sets
+the Vertex routing variables, pins the model IDs, and narrows the backend's
+`ORBIT_CORS_ORIGINS` from `*` to the console origin once that URL exists.
+`ORBIT_SKIP_FRONTEND=1` deploys the API alone.
+
+Two service accounts each hold only what they need. `orbit-fleet-sa` gets
+`roles/datastore.user` and `roles/aiplatform.user`. The console runs as
+`orbit-web-sa`, which can read one secret and nothing else, since it has no
+business reaching Firestore or Vertex AI.
+
+Three values go through Secret Manager rather than `--set-env-vars`: the API
+key, the Space-Track password and the command-signing key. Environment variables
+on a Cloud Run service are readable by anyone holding `roles/viewer` and are
+printed in full by `gcloud run services describe`. Access is granted per secret,
+so neither account can enumerate the project's others.
+
+The script refuses to deploy three things that would otherwise fail silently:
+
+| Missing | Why it refuses | Override |
+|---|---|---|
+| `ORBIT_API_KEY` | Would publish an unauthenticated endpoint | `ORBIT_ALLOW_UNAUTHENTICATED_API=1` |
+| `SPACETRACK_USERNAME` / `SPACETRACK_PASSWORD` | `ORBIT_LIVE_MODE` defaults to `auto`, which resolves to simulated when credentials are absent, giving a demo that claims live orbital data while serving a synthetic catalogue | `ORBIT_ALLOW_SIMULATED_DATA=1` |
+| Firestore database | `ORBIT_MEMORY_BACKEND=auto` degrades to an in-process dict, so the fleet learns nothing between requests | Created automatically |
+
+On Cloud Run, leave `GOOGLE_APPLICATION_CREDENTIALS` unset. The runtime service
+account is injected and ADC picks it up.
+
+**Cost control.** Both services scale to zero and cap at three instances, which
+is the hard ceiling on runaway spend alongside the Vertex AI quota. Set a
+billing budget and alert on the project before any long demo session. Either
+service can be deleted after judging without affecting the evidence, since the
+demo video and this repository carry the proof it ran:
+
+```bash
+gcloud run services delete orbit-command-center  --region us-central1
+gcloud run services delete orbit-fleet-commander --region us-central1
+```
 
 ---
 
-## 🧪 Testing the Fleet
-
-### Trigger a HIGH-risk conjunction
+## Exercising a deployed fleet
 
 ```bash
-curl -X POST "https://<your-service>.run.app/api/conjunction_alert" \
-  -H "Content-Type: application/json" \
-  -H "X-API-Key: <your-api-key>" \
-  -d '{
-    "sat_id": "LANCASTER_ORBIT_1",
-    "debris_id": "FENGYUN_1C_DEB",
-    "alert_source": "SPACE_TRACK_API",
-    "priority": "URGENT",
-    "raw_message": "Conjunction warning: LANCASTER_ORBIT_1 approaching debris field from Fengyun-1C anti-satellite test."
-  }'
-```
+API=https://<your-service>.run.app
+KEY=<your-api-key>
 
-Response:
+curl -X POST "$API/api/conjunction_alert" \
+  -H "Content-Type: application/json" -H "X-API-Key: $KEY" \
+  -d '{"sat_id": "SIM_PROTECTED_ASSET", "debris_id": "FENGYUN_1C_DEB",
+       "alert_source": "SPACE_TRACK_API", "priority": "URGENT",
+       "raw_message": "Conjunction warning: SIM_PROTECTED_ASSET approaching Fengyun-1C debris."}'
+```
 
 ```json
 {
-  "trace_id": "9f1c…",
+  "trace_id": "9f1c...",
   "status": "EXECUTION_AUTHORIZED",
   "risk_band": "HIGH",
   "miss_distance_km": 0.0889,
   "pc": 0.000751,
   "action_taken": "they_dodge",
   "armor_violations": null,
-  "conjunction_id": "LANCASTER_ORBIT_1-X-FENGYUN_1C_DEB-TCA-…"
+  "conjunction_id": "SIM_PROTECTED_ASSET-X-FENGYUN_1C_DEB-TCA-..."
 }
 ```
 
-### Fetch the autonomous mission debrief
-
 ```bash
-curl "https://<your-service>.run.app/api/debrief/<conjunction_id>" \
-  -H "X-API-Key: <your-api-key>"
+curl "$API/api/agent_tree"                    -H "X-API-Key: $KEY"  # live fleet hierarchy
+curl "$API/api/armor_report/<trace_id>"       -H "X-API-Key: $KEY"  # full reasoning replay
+curl "$API/api/debate/transcript/<trace_id>"  -H "X-API-Key: $KEY"  # debate arguments and flags
+curl "$API/api/debrief/<conjunction_id>"      -H "X-API-Key: $KEY"  # Veo debrief status
+curl -o alert.wav "$API/api/audio/ALERT_DETECTED" -H "X-API-Key: $KEY"
 ```
 
-### Hear the fleet
-
-```bash
-curl -o alert.wav "https://<your-service>.run.app/api/audio/ALERT_DETECTED" \
-  -H "X-API-Key: <your-api-key>"
-```
-
-### Prove the architecture
-
-```bash
-curl "https://<your-service>.run.app/api/agent_tree" \
-  -H "X-API-Key: <your-api-key>"
-```
-
-### Replay a mission's complete reasoning chain
-
-```bash
-curl "https://<your-service>.run.app/api/armor_report/<trace_id>" \
-  -H "X-API-Key: <your-api-key>"
-```
-
-Every triage result, screening number, negotiation outcome, safety verdict,
-armor check and breaker transition — correlated by one trace ID.
+`/api/agent_tree` renders every agent's model, tools and temperature straight
+from the running process, so the architecture described here can be checked
+against the deployment instead of taken on trust. `/api/armor_report` returns
+every triage result, screening number, coordination outcome, safety verdict,
+armor check and breaker transition under one trace ID.
 
 ---
 
-## 📁 Project Structure
+## Project structure
 
 ```
 ORBIT/
-├── app.py                    # FastAPI application (15 endpoints, security, audit, watch supervisor)
-├── Dockerfile                # Slim production container for Cloud Run
-├── deploy.sh                 # Idempotent deployment + least-privilege SA bootstrap
-├── logging.json              # Structured JSON logging config for uvicorn
-├── requirements.txt          # Pinned dependencies
-├── .env.example              # Environment template (never commit .env itself)
-├── agents/
-│   ├── __init__.py           # Fleet exports + __version__
-│   ├── orchestrator.py       # FleetCommanderPipeline (BaseAgent), circuit breakers, edge fallback
-│   ├── astro.py              # Astrodynamics specialist (SGP4 + vector recall + real data)
-│   ├── diplomat.py           # Negotiation officer (external fleets)
-│   ├── safety.py             # Safety Officer (zero tools, fail-closed)
-│   ├── edge_agent.py         # Gemma Edge Autopilot (one tool: emergency_dodge, EDGE_AUTONOMOUS)
-│   └── watcher.py            # WatchCommander: persistent multi-day watches (idempotent, crash-safe)
-├── tools/
-│   ├── __init__.py
-│   ├── space_tools.py        # TLE synthesis, SGP4 screening, negotiation, recall & real-data tools
-│   ├── space_track_api.py    # Space-Track.org client (auth, TLEs, CDMs, TTL cache, rate limits)
-│   ├── debrief_generator.py  # Veo 3 mission-debrief video + simulated reconstruction
-│   └── audio_generator.py    # Lyria 2 event cues + offline procedural synth
-├── frontend/                 # React command center (CesiumJS globe, SSE feed, debrief viewer)
-├── debate/                   # Phase 11 multi-agent conjunction debate
-│   ├── models.py             # ManeuverProposal / DebateArgument / DebateTranscript
-│   ├── strategists.py        # Fuel Minimizer / Safety Maximizer / Reassess (temp 0.6)
-│   ├── judge.py              # DebateJudge: selects among validated proposals only
-│   └── moderator.py          # Deterministic BaseAgent: validation, loops, budgets, fallback
-├── evolution/                # Phase 10 self-evolution subsystem
-│   ├── policy.py             # ScreeningPolicy + hard envelope + clamp + PolicyStore
-│   ├── outcome.py            # MissionOutcome records + demo OutcomeSimulator
-│   ├── gaming.py             # Deterministic G1–G5 gaming heuristics
-│   ├── learning_analyst.py   # Proposer LlmAgent (evidence-justified tuning)
-│   ├── meta_critic.py        # Adversarial reviewer LlmAgent (APPROVE/CLAMP/REJECT)
-│   └── engine.py             # EvolutionEngine: fail-closed 18-step cycle + freeze
-└── geap_sim/
-    ├── __init__.py
-    ├── memory_bank.py        # Firestore state + vector recall + watch persistence + API cache
-    ├── agent_registry.py     # Zero-trust manifests + boot attestation
-    ├── model_armor.py        # Deterministic 4-check guardrail middleware
-    └── observability.py      # OTel-style AuditLogger + JsonFormatter
+|- app.py                    # FastAPI app: 24 endpoints, gateway middleware, watch supervisor
+|- deploy.sh                 # Idempotent deploy, least-privilege SAs, Secret Manager, preflight guards
+|- Dockerfile                # Backend container
+|- Dockerfile.frontend       # Console container: Vite build, nginx with SSE-safe proxying
+|- agents/
+|  |- orchestrator.py        # FleetCommanderPipeline (BaseAgent), circuit breakers, edge fallback
+|  |- admiral.py             # Constellation control plane: deterministic fuel triage
+|  |- astro.py               # Astrodynamics specialist: SGP4, vector recall, live data
+|  |- diplomat.py            # Coordination officer
+|  |- safety.py              # Safety Officer: zero tools, fail-closed
+|  |- edge_agent.py          # Gemma edge autopilot: one tool, ROM fallback
+|  |- watcher.py             # WatchCommander: idempotent, crash-safe multi-day watches
+|- debate/                   # Strategists, deterministic moderator, judge, transcript models
+|- evolution/                # Policy, envelope, gaming heuristics, analyst, meta-critic, engine
+|- geap_sim/                 # Registry, memory bank, model armor, command signing, observability
+|- tools/                    # SGP4 screening, Space-Track client, coordination, Veo, Lyria
+|- frontend/                 # React command center: Cesium globe, SSE feed, accessibility
+|- scripts/                  # spacetrack_probe.py and operational helpers
+|- tests/                    # evaluation (21 scenarios), chaos (4), benchmarks
 ```
 
 ---
 
-## ⚠️ Known Limitations
+## Findings and learnings
 
-This is a hackathon prototype, and we would rather show you its edges than
-hide them:
+Six things the build taught us that were not obvious when it started. Each links
+to where the detail lives.
 
-- **Simulated space catalogue.** The TLE catalogue is synthetic (calibrated so
-  the demo scenario screens as a genuine HIGH conjunction under real SGP4);
-  counterparty fleets live at `*.example` endpoints.
-- **Acknowledgements are format-checked, not trust-anchored.** The HMAC-SHA256
-  MAC proves integrity of our simulation, not a real counterparty's signature.
-- **Linear fuel model.** 0.5 percentage points per m/s — a documented stand-in
+- **The hard problem is not screening, it is coordination.** Conjunction data is
+  standardised and machine-readable; deciding who moves is still email and phone
+  calls. See [The coordination gap](#the-coordination-gap).
+- **The catalogue does not carry the fact you need.** `OBJECT_TYPE = PAYLOAD`
+  says nothing about whether an object can manoeuvre, so the fields are named
+  `possibly_manoeuvrable` and the fleet skips negotiation structurally rather
+  than asking a model to negotiate with debris.
+- **A published CDM beats your own propagation, badly.** The same pair screened
+  LOW at 195.9 km from our SGP4 and HIGH at 71 m from the 18 SDS CDM. Any system
+  that quietly prefers its own numbers will be confidently wrong.
+- **Graceful degradation is where the silent failures hide.** Every fallback we
+  added, Space-Track, embeddings, Firestore, media, could serve plausible
+  fiction under a banner claiming live data. The fix was to make provenance a
+  first-class value on screen and a deploy-time refusal in `deploy.sh`, not a
+  log line.
+- **Chaos testing found a bug the unit tests could not.** A NaN fuel value slid
+  through the original clamp chain, which is why sanitisation now happens at the
+  Memory Bank read boundary.
+- **Self-improvement needs an adversary and a hard clamp, not one or the
+  other.** The Meta-Critic catches narrative-level gaming that pattern matching
+  misses; the deterministic envelope catches what a persuasive proposal talks
+  the critic into. See
+  [Self-evolving screening policy](#self-evolving-screening-policy).
+
+---
+
+## Known limitations
+
+This is a hackathon prototype, and its edges are stated, not hidden.
+
+- **Two catalogues, and only one is the command picture.** `/api/orbital_state`
+  is live only. It serves objects and conjunctions built from Space-Track GP
+  elsets and the public CDM feed, and returns `status: "unavailable"` with a
+  reason instead of falling back to anything synthetic, because a
+  plausible-but-fictional map looks exactly like a working one. The synthetic
+  catalogue survives strictly as test fixtures, calibrated so the scenario
+  screens as a genuine HIGH conjunction under real SGP4. Counterparty fleets
+  live at `*.example` endpoints.
+- **TLE screening is far coarser than a published CDM, so the CDM wins.**
+  Verified live: the same pair screened LOW at 195.9 km from our own propagation
+  while the 18 SDS CDM said HIGH at 71 m. TLEs carry roughly kilometre-scale
+  error. Where an official CDM exists it takes precedence
+  (`method: published_cdm/18sds`) and our propagation supplies only what the CDM
+  omits, namely relative velocity at TCA. The consequence before a live demo: a
+  mission screens HIGH only when Space-Track has actually released a CDM for
+  that pair.
+- **Acknowledgements are format-checked, not trust-anchored.** A counterparty
+  `ack_signature` proves the integrity of our simulation, not a real operator's
+  consent, and on the debris path it is left empty, not forged. Our own
+  `command_signature` is a real HMAC and is verified.
+- **Command signing falls back to a per-process key.** With
+  `ORBIT_COMMAND_SIGNING_KEY` unset the fleet mints a random key at boot and
+  audits the degradation. Signatures then hold within the process, so a tampered
+  command still fails verification, but nobody outside can verify them and two
+  replicas cannot verify each other.
+- **Linear fuel model.** 0.5 percentage points per m/s, a documented stand-in
   for the rocket equation with live mass data.
 - **Single-worker sessions.** `InMemorySessionService` keeps the demo cheap;
   horizontal scaling needs ADK's database-backed session service.
 - **Audit replay is process-local.** `/api/armor_report` reads a bounded ring
   buffer; the durable trail is Cloud Logging.
-- **App-level API keys rather than OIDC/IAP.** Deliberate for judge
+- **App-level API keys rather than OIDC or IAP.** Deliberate for judge
   accessibility; production would front this with proper identity.
-- **Safety-verdict model tier is env-configurable** and defaults to
-  `gemini-3.5-flash`; swapping tiers is a one-line change.
-- **Veo + Lyria artifacts are simulated unless explicitly enabled.** The
-  debrief reconstruction and audio cues render deterministically offline;
-  real Vertex AI generation requires `ORBIT_ENABLE_REAL_VEO=1` /
-  `ORBIT_ENABLE_REAL_LYRIA=1` plus credentials.
-- **Edge autonomy is a demo envelope, not flight certification.** The Gemma
-  autopilot's thresholds (Pc > 1e-3, dv ceiling, fuel reserve) mirror the
-  ground policy but nothing here is CCSDS-qualified hardware.
-- **Vector recall uses a deterministic hashing embedder offline.** It
-  clusters templated situation descriptions well; upgrade to the audited
-  Vertex `text-embedding-005` path by adding credentials (automatic).
-- **Watch crash-recovery is cross-process only on Firestore.** The
-  in-memory backend proves the resume logic within one process; durable,
-  multi-instance recovery needs the real Firestore backend.
-- **Space-Track CDM Pc parsing includes a documented heuristic** (values
-  above 0.5 are treated as percentages); verify against live payloads when
-  credentials are configured.
+- **There is no `gemini-3.5-pro`.** The 3.x pro tier currently tops out at
+  `gemini-3.1-pro-preview`, below this hackathon's 3.5 floor, so the
+  heavy-reasoning roles run `gemini-3.7-flash`. Every model ID is env-tunable.
+- **Vertex AI quota is the practical ceiling on live demos.** Back-to-back
+  HIGH-risk missions can draw `429 RESOURCE_EXHAUSTED` on a fresh project. The
+  breakers absorb it and degrade cleanly, but request a quota bump before a long
+  session.
+- **Veo and Lyria artifacts are simulated unless explicitly enabled.**
+- **Edge autonomy is a demo envelope, not flight certification.** The thresholds
+  mirror the ground policy but nothing here is CCSDS-qualified hardware.
+- **Vector recall uses a deterministic hashing embedder offline.** It clusters
+  templated situation descriptions well; adding credentials upgrades it to the
+  audited Vertex `text-embedding-005` path automatically.
+- **Watch crash recovery is cross-process only on Firestore.** The in-memory
+  backend proves the resume logic within one process.
+- **Live LLM output occasionally misses the schema on the first attempt.** The
+  breaker's schema validation catches it and the retry succeeds. This is the
+  breaker working, and it is visible in the audit trail.
+- **Firestore composite indexes are deliberately avoided.** History filters
+  server-side and sorts in Python so the project works on a brand-new database
+  with no manual index creation. At fleet scale, create the composite index and
+  restore the server-side `order_by`.
+- **Space-Track CDM field mapping tolerates two vocabularies.** `cdm_public`
+  uses `PC` and `MIN_RNG` while full CCSDS 508.0-B-1 uses
+  `COLLISION_PROBABILITY` and `MISS_DISTANCE` in metres. Both are read with
+  per-vocabulary unit conversion, and Pc parsing includes a documented heuristic
+  treating values above 0.5 as percentages.
+- **Space-Track rate limits are a hard operational ceiling.** 30 per minute and
+  300 per hour, with account suspension as the penalty. The client self-limits
+  below both (`SPACETRACK_MAX_PER_MINUTE=20`, `SPACETRACK_MAX_PER_HOUR=250`) and
+  raises `SpaceTrackUnavailable` before it will breach one. Cached payloads are
+  schema-versioned, because a stale cache silently served two fixes' worth of
+  old data during development.
 
 ---
 
-## 🔮 Future Work
+## Future work
 
-- **Swap `geap_sim` for the actual GEAP platform** — managed identity, agent
-  registry and Model Armor replace the simulations one module at a time; the
-  seams are already isolated.
-- **True on-device Gemma** — quantised GGUF inference on the flight computer
-  so edge autonomy works with zero connectivity, no Vertex round-trip.
-- **Conjunction storms** — `LoopAgent` continuous monitoring and multi-object
-  deconfliction when one maneuver creates new conjunctions downstream.
-- **Production hardening** — Terraform IaC, CI with a pytest suite, OIDC
-  end-to-end, Firestore-backed sessions for multi-instance deployments.
-
----
-
-## 🤖 Development Methodology
-
-This project was built with an **AI-augmented development workflow**: Claude,
-Cursor and similar assistants were used as accelerators for scaffolding,
-test generation and documentation polish — disclosed here in accordance with
-hackathon rules.
-
-All architectural decisions, orbital-mechanics calibration, safety-policy
-design and GEAP integration choices were made by the human developer. Using
-AI tools to build an agentic system is not a shortcut here — it is the modern
-workflow this hackathon exists to celebrate.
+- Swap `geap_sim` for the managed Gemini Enterprise Agent Platform, one module
+  at a time; the seams are already isolated.
+- Quantised on-device Gemma so edge autonomy works with zero connectivity and no
+  Vertex round trip.
+- Conjunction storms: `LoopAgent` continuous monitoring and multi-object
+  deconfliction for when one manoeuvre creates new conjunctions downstream.
+- Production hardening: Terraform, a frontend build step in CI, OIDC end to end,
+  and Firestore-backed sessions for multi-instance deployments.
 
 ---
 
-## 👥 Team
+## Development methodology
 
-**Jonathan Randall** — solo developer
-*Lancaster University*
+This project was built with an AI-augmented workflow. Claude and similar
+assistants were used for scaffolding, test generation and documentation polish,
+disclosed here in accordance with hackathon rules. Architectural decisions,
+orbital-mechanics calibration, safety-policy design and the GEAP integration
+choices were made by the human developer.
 
-Devpost handle & contact: see submission page.
+## Team
 
----
+**Jonathan Randall**, solo developer. Devpost handle and contact on the
+submission page.
 
-## 📄 License
+## License
 
-MIT — see [LICENSE](LICENSE).
-
----
-
-*Built for the All Things Agentic Hackathon 2026 — Fortified Enterprise Fleet Track.*
+MIT, see [LICENSE](LICENSE).
