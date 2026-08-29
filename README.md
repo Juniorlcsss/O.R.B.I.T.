@@ -1,3 +1,4 @@
+
 # Project O.R.B.I.T.
 
 **Orchestrated Routing & Ballistic Incident Tracking**
@@ -24,8 +25,7 @@ chain to an audit trail.
 |---|---|
 | Live command center | https://orbit-command-center-ch7bwuuvpa-uc.a.run.app |
 | Demo video (approx. 4 min) | _add video URL_ |
-| Architecture diagram | _add diagram_ |
-| Code repository | this repo |
+| Architecture diagram | <img width="1472" height="1369" alt="orbit architecture" src="https://github.com/user-attachments/assets/7849dcef-44d2-4397-b991-609677f644f2" /> |
 | Track | Fortified Enterprise Fleet |
 
 ### Required stack
@@ -388,7 +388,7 @@ exercised by production code.
 python tests/evaluation/run_evaluation.py    # exits non-zero on any failure
 ```
 
-Latest full run: **117 of 117 checks green across 21 scenarios.**
+Latest full run: **126 of 126 checks green across 21 scenarios.**
 
 | Group | Scenarios | What it proves |
 |---|---|---|
