@@ -67,9 +67,21 @@ export default function ConjunctionAlert({
   const [error, setError] = useState(null);
   const dialogRef = useRef(null);
 
+  const [frozen, setFrozen] = useState({ assets: [], secondaries: [], conjunctions: [] });
+  const seeded = useRef(false);
 
   useEffect(() => {
-    if (!open) return;
+    if(!open){
+      seeded.current = false;
+      return;
+    }
+    if(seeded.current){
+      return;
+    }
+    if(assets.length === 0 && secondaries.length === 0){
+      return;
+    }
+
     const worst = (conjunctions || [])
       .slice()
       .sort((a, b) => (b.probability_of_collision || 0) - (a.probability_of_collision || 0))[0];
@@ -77,22 +89,29 @@ export default function ConjunctionAlert({
     const inList = (id, list) => list.some((item) => item.id === id);
     const nextSat = inList(worst?.sat_id, assets) ? worst.sat_id : assets[0]?.id || "";
     const nextDebris = inList(worst?.debris_id, secondaries) ? worst.debris_id : secondaries[0]?.id || "";
+
+    setFrozen({ assets, secondaries, conjunctions: conjunctions || [] });
     setSatId(nextSat);
     setDebrisId(nextDebris);
-    if (!messageEdited) setMessage(composeMessage(nextSat, nextDebris, worst));
-  }, [open, conjunctions, assets, secondaries, messageEdited]);
+    seeded.current = true;
+  }, [open, conjunctions, assets, secondaries]);
 
+  useEffect(() => {
+    if (!open || messageEdited) return;
+    const pair = frozen.conjunctions.find((c) => c.sat_id === satId && c.debris_id === debrisId);
+    setMessage(composeMessage(satId, debrisId, pair));
+  }, [open, satId, debrisId, messageEdited, frozen]);
 
   useDialogChrome({ open, onClose, dialogRef, closeOnEscape: !running });
 
   const encounterBySecondary = useMemo(() => {
     const index = new Map();
-    for (const c of conjunctions || []) {
+    for (const c of frozen.conjunctions) {
       if (c.debris_id) index.set(c.debris_id, c);
       if (c.sat_id) index.set(c.sat_id, c);
     }
     return index;
-  }, [conjunctions]);
+  }, [frozen]);
 
   if (!open) return null;
 
@@ -155,7 +174,7 @@ export default function ConjunctionAlert({
           <div className="grid grid-cols-2 gap-4">
             <Field label="Protected asset">
               <select value={satId} onChange={(e) => setSatId(e.target.value)} className="field">
-                {assets.map((sat) => (
+                {frozen.assets.map((sat) => (
                   <option key={sat.id} value={sat.id}>
                     {objectLabel(sat)}
                   </option>
@@ -163,17 +182,17 @@ export default function ConjunctionAlert({
                 {/* No invented stand-in: with no live objects there is
                     nothing truthful to offer, and a placeholder id would
                     dispatch a mission against an object that is not there. */}
-                {assets.length === 0 && <option value="">no commandable asset in view</option>}
+                {frozen.assets.length === 0 && <option value="">no commandable asset in view</option>}
               </select>
             </Field>
             <Field label="Secondary object">
               <select value={debrisId} onChange={(e) => setDebrisId(e.target.value)} className="field">
-                {secondaries.map((obj) => (
+                {frozen.secondaries.map((obj) => (
                   <option key={obj.id} value={obj.id}>
                     {secondaryOption(obj, encounterBySecondary.get(obj.id))}
                   </option>
                 ))}
-                {secondaries.length === 0 && <option value="">no live secondary in view</option>}
+                {frozen.secondaries.length === 0 && <option value="">no live secondary in view</option>}
               </select>
             </Field>
           </div>
