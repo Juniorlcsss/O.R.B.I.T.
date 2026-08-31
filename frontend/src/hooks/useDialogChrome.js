@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 /**
  * The keyboard contract every overlay in the console owes its operator.
@@ -7,6 +7,11 @@ const FOCUSABLE =
   'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 export default function useDialogChrome({ open, onClose, dialogRef, closeOnEscape = true }) {
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+  const closeOnEscapeRef = useRef(closeOnEscape);
+  closeOnEscapeRef.current = closeOnEscape;
+
   useEffect(() => {
     if (!open) return undefined;
 
@@ -17,9 +22,9 @@ export default function useDialogChrome({ open, onClose, dialogRef, closeOnEscap
 
     const onKeyDown = (event) => {
       if (event.key === "Escape") {
-        if (!closeOnEscape) return;
+        if (!closeOnEscapeRef.current) return;
         event.stopPropagation();
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -41,5 +46,5 @@ export default function useDialogChrome({ open, onClose, dialogRef, closeOnEscap
       window.removeEventListener("keydown", onKeyDown, true);
       opener?.focus?.();
     };
-  }, [open, onClose, dialogRef, closeOnEscape]);
+  }, [open, dialogRef]);
 }
