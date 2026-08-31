@@ -1039,7 +1039,7 @@ def catalog_identity(object_id: str) -> dict[str, Any]:
             "norad_id": "UNKNOWN",
             "operator": "UNKNOWN OPERATOR",
             "kind": "unknown",
-            "manoeuvrable": True,
+            "manoeuvrable": False,
             "manoeuvrability": "unknown",
         }
     return {

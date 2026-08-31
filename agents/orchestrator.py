@@ -966,13 +966,19 @@ class FleetCommanderPipeline(BaseAgent):
                 "action": "we_dodge",
                 "our_dv_mps": our_dv,
                 "their_dv_mps": 0.0,
-                # No counterparty acknowledged, so there is no MAC to carry.
-                # Fabricating one would forge consent that was never given.
                 "ack_signature": "",
                 "reasoning": (
-                    f"{counterparty.get('name', counterparty.get('id'))} is uncontrolled "
-                    f"{counterparty.get('kind', 'debris')} with no operator and no propulsion. "
-                    "No coordination is possible; avoidance is unilateral by construction."
+                    (
+                        f"{counterparty.get('name', counterparty.get('id'))} could not be identified "
+                        "in the catalogue or the live feed, so there is no counterparty to address "
+                        "and no agreement to obtain. Avoidance is unilateral."
+                    )
+                    if counterparty.get("kind") == "unknown"
+                    else (
+                        f"{counterparty.get('name', counterparty.get('id'))} is uncontrolled "
+                        f"{counterparty.get('kind', 'debris')} with no operator and no propulsion. "
+                        "No coordination is possible; avoidance is unilateral by construction."
+                    )
                 ),
                 "counterparty_manoeuvrable": False,
                 "negotiation_skipped": True,
