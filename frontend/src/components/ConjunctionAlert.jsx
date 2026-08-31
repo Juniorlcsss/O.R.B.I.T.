@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiFetch } from "../lib/api.js";
-import { num, objectLabel } from "../lib/format.js";
+import { humanise, num, objectLabel } from "../lib/format.js";
 import useDialogChrome from "../hooks/useDialogChrome.js";
 import { IconClose } from "./icons.jsx";
 
@@ -55,6 +55,7 @@ export default function ConjunctionAlert({
   assets,
   secondaries,
   conjunctions,
+  feedEvents,
   onMissionComplete,
 }) {
   const [satId, setSatId] = useState("");
@@ -104,6 +105,18 @@ export default function ConjunctionAlert({
 
   useDialogChrome({ open, onClose, dialogRef, closeOnEscape: !running });
 
+  const stageLine = useMemo(() => {
+    if (!running) return "";
+    for (let i = (feedEvents || []).length - 1; i >= 0; i -= 1) {
+      const record = feedEvents[i];
+      if (record.agent_name === "orbit.api.gateway") continue;
+      const agent = humanise(record.agent_name);
+      const event = humanise(record.event_type).toLowerCase();
+      return agent ? `${agent} · ${event}` : event;
+    }
+    return "Dispatching to the fleet commander…";
+  }, [running, feedEvents]);
+
   const encounterBySecondary = useMemo(() => {
     const index = new Map();
     for (const c of frozen.conjunctions) {
@@ -140,9 +153,13 @@ export default function ConjunctionAlert({
     }
   }
 
+  const scrim = running
+    ? "fixed inset-0 z-50 flex items-center justify-center bg-ink-900/30 p-6"
+    : "fixed inset-0 z-50 flex items-center justify-center bg-ink-900/80 p-6 backdrop-blur-sm";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/80 p-6 backdrop-blur-sm"
+      className={scrim}
       onMouseDown={(event) => event.target === event.currentTarget && !running && onClose()}
     >
       <div
@@ -255,6 +272,17 @@ export default function ConjunctionAlert({
             <p className="rounded border border-alert/40 px-3 py-2.5 text-sm text-alert">
               Mission failed to start — {error}
             </p>
+          )}
+
+          {running && (
+            <div className="rounded border border-accent/40 px-3 py-2.5">
+              <span className="mb-2 block h-px overflow-hidden bg-hair" aria-hidden="true">
+                <span className="animate-sweep block h-px w-1/3 bg-accent" />
+              </span>
+              <p className="font-mono text-2xs tracking-normal text-fg-3" aria-live="polite">
+                {stageLine}
+              </p>
+            </div>
           )}
 
           <div className="flex items-center gap-4 pt-1">

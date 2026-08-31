@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { beep, playEventAudio } from "../lib/api.js";
 import { age, humanise, monogram, TONE, toneOf } from "../lib/format.js";
-import { IconActivity } from "./icons.jsx";
+import { IconActivity, IconChevron } from "./icons.jsx";
 import StatusMark from "./StatusMark.jsx";
 import useSettings from "../hooks/useSettings.jsx";
 
@@ -34,6 +34,16 @@ function detailPairs(record) {
   return pairs;
 }
 
+function fullPayloadEntries(record) {
+  const payload = record.payload || {};
+  return Object.entries(payload)
+    .filter(([, value]) => value !== undefined && value !== null && value !== "")
+    .map(([key, value]) => [
+      key.replace(/_/g, " "),
+      typeof value === "object" ? JSON.stringify(value, null, 2) : String(value),
+    ]);
+}
+
 /**
  * Fold runs of identical consecutive records into one row with a count, the
  * way any log console does. Keeps a burst of retries from scrolling the
@@ -54,7 +64,7 @@ function collapseRuns(records) {
       previous.seq = record.seq;
       continue;
     }
-    rows.push({ ...record, repeat: 1 });
+    rows.push({ ...record, repeat: 1, firstSeq: record.seq });
   }
   return rows;
 }
@@ -82,6 +92,7 @@ export default function MissionFeed({ events, connected }) {
   const { settings } = useSettings();
   const [nowMs, setNowMs] = useState(Date.now());
   const [showAll, setShowAll] = useState(false);
+  const [expanded, setExpanded] = useState(() => new Set());
   const listRef = useRef(null);
   const stickRef = useRef(true);
 
@@ -103,6 +114,15 @@ export default function MissionFeed({ events, connected }) {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events.length, settings.audio]);
+
+  function toggleRow(key) {
+    setExpanded((previous) => {
+      const next = new Set(previous);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
 
   const noiseCount = useMemo(() => events.filter(isPollNoise).length, [events]);
 
@@ -165,48 +185,84 @@ export default function MissionFeed({ events, connected }) {
           const toneName = toneOf(record);
           const tone = TONE[toneName];
           const pairs = detailPairs(record);
+          const rowKey = `${record.firstSeq ?? record.seq}-${record.trace_id}`;
+          const isOpen = expanded.has(rowKey);
+          const entries = isOpen ? fullPayloadEntries(record) : [];
           return (
             <article
-              key={`${record.seq}-${record.trace_id}`}
-              className="animate-feed-in relative border-b border-hair py-2 pl-5 pr-4 transition-colors duration-150 ease-console hover:bg-ink-700"
+              key={rowKey}
+              className="animate-feed-in relative border-b border-hair transition-colors duration-150 ease-console hover:bg-ink-700"
             >
               {/* Status rail: the only colour on an otherwise grey row. */}
               <span className={`absolute inset-y-0 left-0 w-0.5 ${tone.rail}`} />
 
-              <div className="flex items-center gap-2">
-                <StatusMark tone={toneName} />
-                <span className="rounded-sm bg-ink-600 px-1 py-0.5 font-mono text-2xs tracking-normal text-fg-2">
-                  {monogram(record.agent_name)}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-sm text-fg">{humanise(record.agent_name)}</span>
-                {record.repeat > 1 && (
-                  <span className="shrink-0 rounded-sm bg-ink-600 px-1 font-mono text-2xs tracking-normal text-fg-2">
-                    &times;{record.repeat}
+              <button
+                type="button"
+                onClick={() => toggleRow(rowKey)}
+                aria-expanded={isOpen}
+                aria-controls={`feed-detail-${rowKey}`}
+                className="block w-full py-2 pl-5 pr-4 text-left focus:outline-none focus-visible:bg-ink-700"
+              >
+                <div className="flex items-center gap-2">
+                  <StatusMark tone={toneName} />
+                  <span className="rounded-sm bg-ink-600 px-1 py-0.5 font-mono text-2xs tracking-normal text-fg-2">
+                    {monogram(record.agent_name)}
                   </span>
+                  <span className="min-w-0 flex-1 truncate text-sm text-fg">{humanise(record.agent_name)}</span>
+                  {record.repeat > 1 && (
+                    <span className="shrink-0 rounded-sm bg-ink-600 px-1 font-mono text-2xs tracking-normal text-fg-2">
+                      &times;{record.repeat}
+                    </span>
+                  )}
+                  <span className="shrink-0 font-mono text-2xs tracking-normal text-fg-3">
+                    {age(record.timestamp, nowMs)}
+                  </span>
+                  <IconChevron open={isOpen} size={10} className="shrink-0 text-fg-3" />
+                </div>
+
+                <div className="mt-0.5 flex items-baseline gap-2 pl-7">
+                  <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-2">
+                    {String(record.event_type).toLowerCase()}
+                  </span>
+                  <span className={`shrink-0 font-mono text-2xs tracking-normal ${tone.text}`}>
+                    {isOpen ? String(record.status).toLowerCase() : String(record.status).slice(0, 26).toLowerCase()}
+                  </span>
+                </div>
+
+                {!isOpen && pairs.length > 0 && (
+                  <dl className="mt-0.5 flex flex-wrap gap-x-3 pl-7 font-mono text-2xs tracking-normal">
+                    {pairs.map(([label, value]) => (
+                      <div key={label} className="flex min-w-0 gap-1.5">
+                        <dt className="text-fg-3">{label}</dt>
+                        <dd className="truncate text-fg-2">{value}</dd>
+                      </div>
+                    ))}
+                  </dl>
                 )}
-                <span className="shrink-0 font-mono text-2xs tracking-normal text-fg-3">
-                  {age(record.timestamp, nowMs)}
-                </span>
-              </div>
+              </button>
 
-              <div className="mt-0.5 flex items-baseline gap-2 pl-7">
-                <span className="min-w-0 flex-1 truncate font-mono text-xs text-fg-2">
-                  {String(record.event_type).toLowerCase()}
-                </span>
-                <span className={`shrink-0 font-mono text-2xs tracking-normal ${tone.text}`}>
-                  {String(record.status).slice(0, 26).toLowerCase()}
-                </span>
-              </div>
-
-              {pairs.length > 0 && (
-                <dl className="mt-0.5 flex flex-wrap gap-x-3 pl-7 font-mono text-2xs tracking-normal">
-                  {pairs.map(([label, value]) => (
-                    <div key={label} className="flex min-w-0 gap-1.5">
-                      <dt className="text-fg-3">{label}</dt>
-                      <dd className="truncate text-fg-2">{value}</dd>
-                    </div>
-                  ))}
-                </dl>
+              {isOpen && (
+                <div
+                  id={`feed-detail-${rowKey}`}
+                  className="border-t border-hair bg-ink-900/60 px-4 py-2 pl-12"
+                >
+                  {entries.length === 0 && (
+                    <p className="font-mono text-2xs tracking-normal text-fg-3">No payload recorded.</p>
+                  )}
+                  <dl className="space-y-1">
+                    {entries.map(([label, value]) => (
+                      <div key={label}>
+                        <dt className="font-mono text-2xs tracking-normal text-fg-3">{label}</dt>
+                        <dd className="whitespace-pre-wrap break-words font-mono text-2xs leading-relaxed tracking-normal text-fg-2">
+                          {value}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <p className="mt-2 break-all font-mono text-2xs tracking-normal text-fg-3">
+                    {record.timestamp} &middot; trace {record.trace_id}
+                  </p>
+                </div>
               )}
             </article>
           );

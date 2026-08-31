@@ -4,6 +4,7 @@ import MissionFeed from "./components/MissionFeed.jsx";
 import FleetStatus from "./components/FleetStatus.jsx";
 import ArmorLog from "./components/ArmorLog.jsx";
 import ConjunctionAlert from "./components/ConjunctionAlert.jsx";
+import MissionOutcome from "./components/MissionOutcome.jsx";
 import SettingsPanel from "./components/SettingsPanel.jsx";
 import MissionDebrief from "./components/MissionDebrief.jsx";
 import FirstRun from "./components/FirstRun.jsx";
@@ -120,6 +121,7 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [maneuver, setManeuver] = useState(null);
   const [pending, setPending] = useState(null);
+  const [lastMission, setLastMission] = useState(null);
   const [selectedId, setSelectedId] = useState(null);
   const [announcement, setAnnouncement] = useState("");
   const [debriefId, setDebriefId] = useState(null);
@@ -219,6 +221,7 @@ export default function App() {
   }, []);
 
   function handleMissionComplete({ request, response }) {
+    setLastMission({ request, response });
     setPending({
       satId: request.sat_id,
       traceId: response.trace_id,
@@ -467,6 +470,7 @@ export default function App() {
           aria-label="Fleet status"
           className="min-h-0 divide-y divide-hair overflow-y-auto bg-ink-800 max-lg:h-auto max-lg:shrink-0 max-lg:overflow-visible"
         >
+          <MissionOutcome mission={lastMission} onDismiss={() => setLastMission(null)} />
           <FleetStatus
             tree={tree}
             treeError={treeError}
@@ -487,6 +491,7 @@ export default function App() {
         assets={assets}
         secondaries={secondaries}
         conjunctions={conjunctions}
+        feedEvents={events}
         onMissionComplete={handleMissionComplete}
       />
       <MissionDebrief open={debriefOpen} onClose={() => setDebriefOpen(false)} conjunctionId={debriefId} />

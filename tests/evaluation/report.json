@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-08-31T01:37:35.168788+00:00",
+  "generated_utc": "2026-08-31T14:12:14.850050+00:00",
   "fleet_version": "0.12.0",
   "python": "3.12.4",
   "mode": "offline-scripted",
@@ -8,7 +8,7 @@
       "name": "circuit_breaker",
       "description": "Dead triage provider \u2192 3 attempts with backoff \u2192 breaker trips \u2192 HUMAN_DISPATCH_DEGRADED",
       "passed": true,
-      "duration_ms": 1260.5,
+      "duration_ms": 1542.4,
       "error": null,
       "checks": [
         {
@@ -39,7 +39,7 @@
         {
           "name": "fast_with_patched_backoff",
           "passed": true,
-          "detail": "1.26s"
+          "detail": "1.54s"
         }
       ]
     },
@@ -47,7 +47,7 @@
       "name": "constellation_optimization",
       "description": "Fleet Admiral ranks a conjunction burst by fuel: healthiest dodges, reserve-critical holds",
       "passed": true,
-      "duration_ms": 0.7,
+      "duration_ms": 0.6,
       "error": null,
       "checks": [
         {
@@ -150,700 +150,162 @@
     {
       "name": "debate_all_settle",
       "description": "All three strategists restate \u2192 SETTLED, judge adjudicates the settled proposals (no fallback)",
-      "passed": true,
-      "duration_ms": 9.8,
-      "error": null,
-      "checks": [
-        {
-          "name": "debate_produced_an_outcome",
-          "passed": true,
-          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'fourteen m/s buys a margin worth having.', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': '9ab87b39690241c5b899d4cfc730cebb', 'moderator': 'debate_moderator_eval'}"
-        },
-        {
-          "name": "did_not_fall_back",
-          "passed": true,
-          "detail": "fallback_used=False flags=['STALLED', 'STALLED', 'STALLED', 'SETTLED']"
-        },
-        {
-          "name": "all_three_stalled",
-          "passed": true,
-          "detail": "['STALLED', 'STALLED', 'STALLED', 'SETTLED']"
-        },
-        {
-          "name": "settled_flag_recorded",
-          "passed": true,
-          "detail": "['STALLED', 'STALLED', 'STALLED', 'SETTLED']"
-        },
-        {
-          "name": "judge_adjudicated",
-          "passed": true,
-          "detail": "True"
-        },
-        {
-          "name": "winner_is_a_real_strategist",
-          "passed": true,
-          "detail": "safety_maximizer"
-        },
-        {
-          "name": "flag_rounds_are_round_indices",
-          "passed": true,
-          "detail": "rounds=[1, 1, 1]"
-        },
-        {
-          "name": "stopped_promptly",
-          "passed": true,
-          "detail": "0.01s"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 12.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "debate_converges",
       "description": "Three strategists converge on an ~8 m/s prograde burn in round 0",
-      "passed": true,
-      "duration_ms": 4.4,
-      "error": null,
-      "checks": [
-        {
-          "name": "outcome_committed",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "converged",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "no_fallback_needed",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "judge_skipped_on_consensus",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "delta_v_is_8ish",
-          "passed": true,
-          "detail": "7.8"
-        },
-        {
-          "name": "downstream_payload_shape",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "transcript_persisted",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "transcript_has_three_openers",
-          "passed": true,
-          "detail": "3 arguments"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "debate_fallback",
       "description": "All proposals hallucinated \u2192 fallback_used=True, legacy recommendation returned",
-      "passed": true,
-      "duration_ms": 6.5,
-      "error": null,
-      "checks": [
-        {
-          "name": "outcome_committed",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "fallback_used",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "legacy_recommendation_restored",
-          "passed": true,
-          "detail": "dv=8.0 vs recommended 8.0"
-        },
-        {
-          "name": "three_hallucinations_flagged",
-          "passed": true,
-          "detail": "24"
-        },
-        {
-          "name": "fallback_audited_as_warning",
-          "passed": true,
-          "detail": ""
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "debate_hallucination_caught",
       "description": "Cited miss distance 42 km vs actual 0.0889 km \u2192 HALLUCINATION flag, proposal discarded",
-      "passed": true,
-      "duration_ms": 4.2,
-      "error": null,
-      "checks": [
-        {
-          "name": "hallucination_flagged",
-          "passed": true,
-          "detail": "['HALLUCINATION']"
-        },
-        {
-          "name": "named_the_liar",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "outcome_still_valid",
-          "passed": true,
-          "detail": "{'strategist': 'fuel_minimizer', 'strategy': 'prograde_burn', 'delta_v_mps': 7.5, 'target_miss_distance_km': 1.0, 'rationale': 'fuel_minimizer position', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 7.5, 'their_dv_mps': 0.0, 'converged': True, 'fallback_used': False, 'judge_used': False, 'trace_id': 'ad73c3db6f0049d09b6a9b7aa1616872', 'moderator': 'debate_moderator_eval'}"
-        },
-        {
-          "name": "winner_among_honest_voices",
-          "passed": true,
-          "detail": "fuel_minimizer"
-        },
-        {
-          "name": "hallucinated_dv_not_selected",
-          "passed": true,
-          "detail": "7.5"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "debate_loop_caught",
       "description": "Verbatim repeat -> STALLED flag + agent frozen; debate completes via judge within budget",
-      "passed": true,
-      "duration_ms": 8.1,
-      "error": null,
-      "checks": [
-        {
-          "name": "loop_detected",
-          "passed": true,
-          "detail": "['STALLED']"
-        },
-        {
-          "name": "looper_identified",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "debate_still_produced_winner",
-          "passed": true,
-          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'margins first: fourteen m/s normal for a wide berth. Held firm on margin (restatement 3).', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': 'b43b55362cba49faa868a0a8a9bea23c', 'moderator': 'debate_moderator_eval'}"
-        },
-        {
-          "name": "judge_adjudicated_divergence",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "winner_is_valid_strategist",
-          "passed": true,
-          "detail": "safety_maximizer"
-        },
-        {
-          "name": "completed_within_budget",
-          "passed": true,
-          "detail": "0.01s"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "debate_safety_gate_intact",
       "description": "80 m/s proposal discarded pre-selection; downstream armour still rejects >ceiling",
-      "passed": true,
-      "duration_ms": 3115.2,
-      "error": null,
-      "checks": [
-        {
-          "name": "over_ceiling_discarded_pre_selection",
-          "passed": true,
-          "detail": "['PHYSICS: delta_v 80.0 m/s outside [0, 50]']"
-        },
-        {
-          "name": "physics_flag_named_ceiling",
-          "passed": true,
-          "detail": "['PHYSICS: delta_v 80.0 m/s outside [0, 50]']"
-        },
-        {
-          "name": "mission_executes_on_valid_burn",
-          "passed": true,
-          "detail": "EXECUTION_AUTHORIZED"
-        },
-        {
-          "name": "armour_inspected_valid_burn_only",
-          "passed": true,
-          "detail": "operative=8.0"
-        },
-        {
-          "name": "armour_approved_it",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "downstream_armour_rejects_over_ceiling",
-          "passed": true,
-          "detail": "['POLICY_CEILING_EXCEEDED: operative delta-v 80.000 m/s exceeds the 50.0 m/s hard ceiling']"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "debris_skips_negotiation",
       "description": "Debris counterparty \u2192 negotiation stage skipped, unilateral avoidance, gates intact",
-      "passed": true,
-      "duration_ms": 9.9,
-      "error": null,
-      "checks": [
-        {
-          "name": "negotiation_skipped_event",
-          "passed": true,
-          "detail": "['AGENT_INVOCATION', 'CIRCUIT_BREAKER_STATE', 'AGENT_INVOCATION', 'AGENT_INVOCATION', 'CIRCUIT_BREAKER_STATE', 'AGENT_INVOCATION', 'CYCLE_START', 'STRATEGIST_OFFLINE', 'STRATEGIST_OFFLINE', 'STRATEGIST_OFFLINE', 'STRATEGIST_OFFLINE', 'STRATEGIST_OFFLINE']"
-        },
-        {
-          "name": "reason_is_counterparty_cannot_manoeuvre",
-          "passed": true,
-          "detail": "COUNTERPARTY_CANNOT_MANOEUVRE"
-        },
-        {
-          "name": "did_not_end_in_standoff",
-          "passed": true,
-          "detail": "EXECUTION_AUTHORIZED"
-        },
-        {
-          "name": "negotiation_officer_never_invoked",
-          "passed": true,
-          "detail": "0 invocation(s)"
-        },
-        {
-          "name": "armor_still_inspected",
-          "passed": true,
-          "detail": "1 inspection(s)"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "evolution_conservative_loosen",
       "description": "12 over-reactions \u2192 evidence-backed pc_high raise applied, diff logged",
-      "passed": true,
-      "duration_ms": 3.7,
-      "error": null,
-      "checks": [
-        {
-          "name": "applied",
-          "passed": true,
-          "detail": "APPLIED: 12/12 recent outcomes were over-reactions at miss >8 km"
-        },
-        {
-          "name": "threshold_loosened",
-          "passed": true,
-          "detail": "0.0001 -> 0.00016"
-        },
-        {
-          "name": "diff_logged",
-          "passed": true,
-          "detail": "['pc_high_threshold: 0.0001 \u2192 0.00016']"
-        },
-        {
-          "name": "cycle_persisted",
-          "passed": true,
-          "detail": "1 cycles"
-        },
-        {
-          "name": "version_bumped",
-          "passed": true,
-          "detail": "v0 -> v1"
-        },
-        {
-          "name": "audit_cycle_applied_on_trace",
-          "passed": true,
-          "detail": ""
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "evolution_envelope_clamp",
       "description": "Approved over-cap proposal \u2192 CLAMPED_APPLIED with recorded clamp actions",
-      "passed": true,
-      "duration_ms": 2.8,
-      "error": null,
-      "checks": [
-        {
-          "name": "clamped_applied",
-          "passed": true,
-          "detail": "CLAMPED_APPLIED: raise the HIGH bar and widen the preferred cushion"
-        },
-        {
-          "name": "clamp_actions_recorded",
-          "passed": true,
-          "detail": "['pc_high_threshold adjusted from 0.0003 to 0.000298 (envelope [1e-05, 0.001], max step 0.000198)', 'preferred_miss_distance_km adjusted from 3 to 1.9 (envelope [0.5, 5], max step 0.9)']"
-        },
-        {
-          "name": "final_inside_envelope",
-          "passed": true,
-          "detail": "[]"
-        },
-        {
-          "name": "provenance_marked_clamped",
-          "passed": true,
-          "detail": "clamped"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "evolution_freeze",
       "description": "3 consecutive rejections \u2192 FROZEN_HUMAN_REVIEW; manual unfreeze restores operation",
-      "passed": true,
-      "duration_ms": 12.0,
-      "error": null,
-      "checks": [
-        {
-          "name": "freeze_engaged_within_three_rejections",
-          "passed": true,
-          "detail": "['REJECTED', 'REJECTED', 'FROZEN_HUMAN_REVIEW']"
-        },
-        {
-          "name": "still_frozen_on_next_trigger",
-          "passed": true,
-          "detail": "FROZEN_HUMAN_REVIEW"
-        },
-        {
-          "name": "unfreeze_restores_operation",
-          "passed": true,
-          "detail": "REJECTED"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "evolution_gaming_rejected",
       "description": "Gaming temptation \u2192 CRITICAL G1/G3 flags + suspicion \u22650.7 \u2192 REJECTED, policy untouched",
-      "passed": true,
-      "duration_ms": 3.0,
-      "error": null,
-      "checks": [
-        {
-          "name": "rejected_or_frozen",
-          "passed": true,
-          "detail": "REJECTED"
-        },
-        {
-          "name": "critical_gaming_flag",
-          "passed": true,
-          "detail": "[('G1', 'CRITICAL'), ('G3', 'CRITICAL'), ('G3', 'CRITICAL'), ('G3', 'CRITICAL')]"
-        },
-        {
-          "name": "suspicion_cleared_reject_line",
-          "passed": true,
-          "detail": "0.9"
-        },
-        {
-          "name": "policy_untouched",
-          "passed": true,
-          "detail": "0.0001 -> 0.0001"
-        },
-        {
-          "name": "rejection_recorded",
-          "passed": true,
-          "detail": "1"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "fuel_guard",
       "description": "6% fuel + 8 m/s dodge (projects 2% < 5% reserve) \u2192 STRATEGIC_RESERVE_VIOLATION",
-      "passed": true,
-      "duration_ms": 12.0,
-      "error": null,
-      "checks": [
-        {
-          "name": "fuel_seeded_6pct",
-          "passed": true,
-          "detail": "seeded=6.0%"
-        },
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
-        },
-        {
-          "name": "reserve_violation",
-          "passed": true,
-          "detail": "['STRATEGIC_RESERVE_VIOLATION: burn would leave 2.00% fuel, below the 5.0% reserve']"
-        },
-        {
-          "name": "tank_untouched",
-          "passed": true,
-          "detail": "fuel after=6.0%"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "hallucination_guard",
       "description": "Negotiated dv 13.9 vs approved 8.0 \u2192 HALLUCINATED_DELTA_V, mission blocked",
-      "passed": true,
-      "duration_ms": 19.9,
-      "error": null,
-      "checks": [
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
-        },
-        {
-          "name": "hallucination_violation",
-          "passed": true,
-          "detail": "['HALLUCINATED_DELTA_V: negotiated 13.900 m/s diverges from approved 8.000 m/s beyond 0.1 m/s tolerance']"
-        },
-        {
-          "name": "armor_rejected",
-          "passed": true,
-          "detail": "REJECTED"
-        },
-        {
-          "name": "human_dispatch_opened",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "no_fuel_debit_on_block",
-          "passed": true,
-          "detail": "fuel=100.0%"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "high_risk_conjunction",
       "description": "Calibrated HIGH pair runs end-to-end: authorised, fuel debited, logged, armour all-PASS",
-      "passed": true,
-      "duration_ms": 620.1,
-      "error": null,
-      "checks": [
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "expected EXECUTION_AUTHORIZED, got EXECUTION_AUTHORIZED"
-        },
-        {
-          "name": "armor_inspection_ran",
-          "passed": true,
-          "detail": "found 1"
-        },
-        {
-          "name": "armor_all_four_checks_pass",
-          "passed": true,
-          "detail": "{'hallucination_guard': 'PASS \u2014 8.000 m/s within tolerance of 8.000 m/s', 'policy_ceiling': 'PASS \u2014 8.000 m/s <= 50.0 m/s', 'fuel_guard': 'PASS \u2014 current 100.00%, projected 96.00%', 'secret_scan': 'PASS \u2014 9 strings scanned'}"
-        },
-        {
-          "name": "armor_status_approved",
-          "passed": true,
-          "detail": "APPROVED"
-        },
-        {
-          "name": "fuel_decremented",
-          "passed": true,
-          "detail": "expected 96.0%, got 96.0%"
-        },
-        {
-          "name": "conjunction_persisted",
-          "passed": true,
-          "detail": "no doc for SIM_PROTECTED_ASSET-X-FENGYUN_1C_DEB-TCA-2026-09-01T01-37-39Z"
-        },
-        {
-          "name": "conjunction_final_status_recorded",
-          "passed": true,
-          "detail": "{'final_status': 'EXECUTION_AUTHORIZED', 'our_dv_mps': 8.0}"
-        },
-        {
-          "name": "audit_chain_complete",
-          "passed": true,
-          "detail": "26 events; stages=['AGENT_INVOCATION', 'CIRCUIT_BREAKER_STATE', 'CYCLE_START', 'DEBATE_COMPLETE', 'DEBATE_FALLBACK', 'DEBATE_FLAG_FALLBACK', 'MANEUVER_COMMAND_SIGNED', 'MANEUVER_INSPECTION', 'MISSION_STATUS', 'NEGOTIATION_SKIPPED', 'STRATEGIST_OFFLINE']"
-        },
-        {
-          "name": "debrief_autonomously_generated",
-          "passed": true,
-          "detail": [
-            "AGENT_INVOCATION",
-            "CIRCUIT_BREAKER_STATE",
-            "CYCLE_START",
-            "DEBATE_COMPLETE",
-            "DEBATE_FALLBACK",
-            "DEBATE_FLAG_FALLBACK",
-            "DEBRIEF_QUEUED",
-            "DEBRIEF_READY",
-            "MANEUVER_COMMAND_SIGNED",
-            "MANEUVER_INSPECTION",
-            "MISSION_STATUS",
-            "NEGOTIATION_SKIPPED",
-            "STRATEGIST_OFFLINE"
-          ]
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "low_risk_conjunction",
       "description": "LOW band (Pc 1e-9, miss 1500 km) logs only \u2014 no burn, no negotiation, no armour",
-      "passed": true,
-      "duration_ms": 3.2,
-      "error": null,
-      "checks": [
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "LOGGED_NO_ACTION_REQUIRED"
-        },
-        {
-          "name": "no_fuel_change",
-          "passed": true,
-          "detail": "fuel=100.0%"
-        },
-        {
-          "name": "negotiation_never_invoked",
-          "passed": true,
-          "detail": "unexpected armour inspection in trail: ['AGENT_INVOCATION', 'CIRCUIT_BREAKER_STATE', 'MISSION_STATUS']"
-        },
-        {
-          "name": "decision_is_log_only",
-          "passed": true,
-          "detail": "{'decision': 'LOGGED_NO_ACTION_REQUIRED', 'risk_band': 'LOW'}"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "medium_risk_hitl",
       "description": "MEDIUM band held for human review \u2014 advisory logged, zero autonomous execution",
-      "passed": true,
-      "duration_ms": 3.3,
-      "error": null,
-      "checks": [
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "HELD_FOR_HUMAN_REVIEW"
-        },
-        {
-          "name": "hitl_flag_set",
-          "passed": true,
-          "detail": "{'decision': 'HELD_FOR_HUMAN_REVIEW', 'risk_band': 'MEDIUM', 'armor_advisory_available': True, 'approved': True, 'human_in_loop_required': True}"
-        },
-        {
-          "name": "advisory_review_present",
-          "passed": true,
-          "detail": "advisory_available=True"
-        },
-        {
-          "name": "advisory_path_skips_deterministic_sweep",
-          "passed": true,
-          "detail": "deterministic sweep must only run pre-execution: ['AGENT_INVOCATION', 'CIRCUIT_BREAKER_STATE', 'MISSION_STATUS']"
-        },
-        {
-          "name": "no_execution_authorised",
-          "passed": true,
-          "detail": ""
-        },
-        {
-          "name": "no_fuel_change",
-          "passed": true,
-          "detail": "fuel=100.0%"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "pii_sweep",
       "description": "Fake AWS key in negotiation reasoning \u2192 SENSITIVE_DATA_LEAK (AWS_ACCESS_KEY), content withheld",
-      "passed": true,
-      "duration_ms": 8.0,
-      "error": null,
-      "checks": [
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
-        },
-        {
-          "name": "leak_violation_with_label",
-          "passed": true,
-          "detail": "['SENSITIVE_DATA_LEAK: AWS_ACCESS_KEY @ $.negotiation.reasoning']"
-        },
-        {
-          "name": "secret_scan_check_failed",
-          "passed": true,
-          "detail": "{'hallucination_guard': 'PASS \u2014 8.000 m/s within tolerance of 8.000 m/s', 'policy_ceiling': 'PASS \u2014 8.000 m/s <= 50.0 m/s', 'fuel_guard': 'PASS \u2014 current 100.00%, projected 96.00%', 'secret_scan': 'FAIL \u2014 1 finding(s); content withheld from logs'}"
-        },
-        {
-          "name": "key_never_echoed",
-          "passed": true,
-          "detail": "audit trail is clean"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "policy_ceiling",
       "description": "80 m/s negotiated burn vs 50 m/s ceiling \u2192 POLICY_CEILING_EXCEEDED, mission blocked",
-      "passed": true,
-      "duration_ms": 7.9,
-      "error": null,
-      "checks": [
-        {
-          "name": "final_status",
-          "passed": true,
-          "detail": "MANEUVER_BLOCKED_BY_ARMOR"
-        },
-        {
-          "name": "ceiling_violation",
-          "passed": true,
-          "detail": "['HALLUCINATED_DELTA_V: negotiated 80.000 m/s diverges from approved 8.000 m/s beyond 0.1 m/s tolerance', 'POLICY_CEILING_EXCEEDED: operative delta-v 80.000 m/s exceeds the 50.0 m/s hard ceiling']"
-        },
-        {
-          "name": "ceiling_check_failed",
-          "passed": true,
-          "detail": "{'hallucination_guard': 'FAIL', 'policy_ceiling': 'FAIL', 'fuel_guard': 'PASS \u2014 current 100.00%, projected 60.00%', 'secret_scan': 'PASS \u2014 9 strings scanned'}"
-        },
-        {
-          "name": "no_fuel_debit_on_block",
-          "passed": true,
-          "detail": "fuel=100.0%"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     },
     {
       "name": "policy_changes_screening",
       "description": "Fixed Pc 7.51e-4: HIGH under default policy \u2192 MEDIUM under evolved pc_high=9e-4",
-      "passed": true,
-      "duration_ms": 7.2,
-      "error": null,
-      "checks": [
-        {
-          "name": "default_band_is_high",
-          "passed": true,
-          "detail": "band=HIGH, thresholds={'high': 0.0001, 'medium': 1e-06}"
-        },
-        {
-          "name": "evolved_band_is_medium",
-          "passed": true,
-          "detail": "band=MEDIUM, thresholds={'high': 0.0009, 'medium': 1e-06}"
-        },
-        {
-          "name": "same_fixed_pc_different_outcome",
-          "passed": true,
-          "detail": "7.51e-04: HIGH \u2192 MEDIUM"
-        },
-        {
-          "name": "screen_reports_live_thresholds",
-          "passed": true,
-          "detail": "{'high': 0.0009, 'medium': 1e-06}"
-        }
-      ]
+      "passed": false,
+      "duration_ms": 0.1,
+      "error": "OSError: [Errno 22] Invalid argument",
+      "checks": []
     }
   ],
   "summary": {
     "tests": 21,
-    "tests_passed": 21,
-    "checks": 126,
-    "checks_passed": 126,
-    "all_passed": true
+    "tests_passed": 2,
+    "checks": 25,
+    "checks_passed": 25,
+    "all_passed": false
   },
-  "markdown_summary": "| Test | Result | Checks | Duration |\n|---|---|---|---|\n| circuit_breaker | PASS | 6/6 | 1260 ms |\n| constellation_optimization | PASS | 19/19 | 1 ms |\n| debate_all_settle | PASS | 8/8 | 10 ms |\n| debate_converges | PASS | 8/8 | 4 ms |\n| debate_fallback | PASS | 5/5 | 6 ms |\n| debate_hallucination_caught | PASS | 5/5 | 4 ms |\n| debate_loop_caught | PASS | 6/6 | 8 ms |\n| debate_safety_gate_intact | PASS | 6/6 | 3115 ms |\n| debris_skips_negotiation | PASS | 5/5 | 10 ms |\n| evolution_conservative_loosen | PASS | 6/6 | 4 ms |\n| evolution_envelope_clamp | PASS | 4/4 | 3 ms |\n| evolution_freeze | PASS | 3/3 | 12 ms |\n| evolution_gaming_rejected | PASS | 5/5 | 3 ms |\n| fuel_guard | PASS | 4/4 | 12 ms |\n| hallucination_guard | PASS | 5/5 | 20 ms |\n| high_risk_conjunction | PASS | 9/9 | 620 ms |\n| low_risk_conjunction | PASS | 4/4 | 3 ms |\n| medium_risk_hitl | PASS | 6/6 | 3 ms |\n| pii_sweep | PASS | 4/4 | 8 ms |\n| policy_ceiling | PASS | 4/4 | 8 ms |\n| policy_changes_screening | PASS | 4/4 | 7 ms |\n\n**Verdict: ALL GREEN** (126/126 checks)"
+  "markdown_summary": "| Test | Result | Checks | Duration |\n|---|---|---|---|\n| circuit_breaker | PASS | 6/6 | 1542 ms |\n| constellation_optimization | PASS | 19/19 | 1 ms |\n| debate_all_settle | **FAIL** | 0/0 | 12 ms |\n| debate_converges | **FAIL** | 0/0 | 0 ms |\n| debate_fallback | **FAIL** | 0/0 | 0 ms |\n| debate_hallucination_caught | **FAIL** | 0/0 | 0 ms |\n| debate_loop_caught | **FAIL** | 0/0 | 0 ms |\n| debate_safety_gate_intact | **FAIL** | 0/0 | 0 ms |\n| debris_skips_negotiation | **FAIL** | 0/0 | 0 ms |\n| evolution_conservative_loosen | **FAIL** | 0/0 | 0 ms |\n| evolution_envelope_clamp | **FAIL** | 0/0 | 0 ms |\n| evolution_freeze | **FAIL** | 0/0 | 0 ms |\n| evolution_gaming_rejected | **FAIL** | 0/0 | 0 ms |\n| fuel_guard | **FAIL** | 0/0 | 0 ms |\n| hallucination_guard | **FAIL** | 0/0 | 0 ms |\n| high_risk_conjunction | **FAIL** | 0/0 | 0 ms |\n| low_risk_conjunction | **FAIL** | 0/0 | 0 ms |\n| medium_risk_hitl | **FAIL** | 0/0 | 0 ms |\n| pii_sweep | **FAIL** | 0/0 | 0 ms |\n| policy_ceiling | **FAIL** | 0/0 | 0 ms |\n| policy_changes_screening | **FAIL** | 0/0 | 0 ms |\n\n**Verdict: 19 FAILING** (25/25 checks)"
 }
