@@ -1,5 +1,5 @@
 {
-  "generated_utc": "2026-08-28T02:11:27.709722+00:00",
+  "generated_utc": "2026-08-31T01:08:29.155603+00:00",
   "fleet_version": "0.12.0",
   "python": "3.12.4",
   "mode": "offline-scripted",
@@ -8,7 +8,7 @@
       "name": "circuit_breaker",
       "description": "Dead triage provider \u2192 3 attempts with backoff \u2192 breaker trips \u2192 HUMAN_DISPATCH_DEGRADED",
       "passed": true,
-      "duration_ms": 1524.1,
+      "duration_ms": 1666.0,
       "error": null,
       "checks": [
         {
@@ -39,7 +39,7 @@
         {
           "name": "fast_with_patched_backoff",
           "passed": true,
-          "detail": "1.52s"
+          "detail": "1.67s"
         }
       ]
     },
@@ -47,7 +47,7 @@
       "name": "constellation_optimization",
       "description": "Fleet Admiral ranks a conjunction burst by fuel: healthiest dodges, reserve-critical holds",
       "passed": true,
-      "duration_ms": 0.7,
+      "duration_ms": 1.0,
       "error": null,
       "checks": [
         {
@@ -151,13 +151,13 @@
       "name": "debate_all_settle",
       "description": "All three strategists restate \u2192 SETTLED, judge adjudicates the settled proposals (no fallback)",
       "passed": true,
-      "duration_ms": 12.8,
+      "duration_ms": 13.5,
       "error": null,
       "checks": [
         {
           "name": "debate_produced_an_outcome",
           "passed": true,
-          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'fourteen m/s buys a margin worth having.', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': 'a830efd642af499f8c60d7fc156ac21a', 'moderator': 'debate_moderator_eval'}"
+          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'fourteen m/s buys a margin worth having.', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': '012d95c316ff4bf0b21c4acaaba07902', 'moderator': 'debate_moderator_eval'}"
         },
         {
           "name": "did_not_fall_back",
@@ -200,7 +200,7 @@
       "name": "debate_converges",
       "description": "Three strategists converge on an ~8 m/s prograde burn in round 0",
       "passed": true,
-      "duration_ms": 4.2,
+      "duration_ms": 5.5,
       "error": null,
       "checks": [
         {
@@ -249,7 +249,7 @@
       "name": "debate_fallback",
       "description": "All proposals hallucinated \u2192 fallback_used=True, legacy recommendation returned",
       "passed": true,
-      "duration_ms": 6.3,
+      "duration_ms": 7.3,
       "error": null,
       "checks": [
         {
@@ -283,7 +283,7 @@
       "name": "debate_hallucination_caught",
       "description": "Cited miss distance 42 km vs actual 0.0889 km \u2192 HALLUCINATION flag, proposal discarded",
       "passed": true,
-      "duration_ms": 5.1,
+      "duration_ms": 5.4,
       "error": null,
       "checks": [
         {
@@ -299,7 +299,7 @@
         {
           "name": "outcome_still_valid",
           "passed": true,
-          "detail": "{'strategist': 'fuel_minimizer', 'strategy': 'prograde_burn', 'delta_v_mps': 7.5, 'target_miss_distance_km': 1.0, 'rationale': 'fuel_minimizer position', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 7.5, 'their_dv_mps': 0.0, 'converged': True, 'fallback_used': False, 'judge_used': False, 'trace_id': '4d77cc5115944c78a1119f2e48514426', 'moderator': 'debate_moderator_eval'}"
+          "detail": "{'strategist': 'fuel_minimizer', 'strategy': 'prograde_burn', 'delta_v_mps': 7.5, 'target_miss_distance_km': 1.0, 'rationale': 'fuel_minimizer position', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 7.5, 'their_dv_mps': 0.0, 'converged': True, 'fallback_used': False, 'judge_used': False, 'trace_id': 'f93eb01dac6e48558e6dd02f20abf157', 'moderator': 'debate_moderator_eval'}"
         },
         {
           "name": "winner_among_honest_voices",
@@ -317,7 +317,7 @@
       "name": "debate_loop_caught",
       "description": "Verbatim repeat -> STALLED flag + agent frozen; debate completes via judge within budget",
       "passed": true,
-      "duration_ms": 8.9,
+      "duration_ms": 9.3,
       "error": null,
       "checks": [
         {
@@ -333,7 +333,7 @@
         {
           "name": "debate_still_produced_winner",
           "passed": true,
-          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'margins first: fourteen m/s normal for a wide berth. Held firm on margin (restatement 3).', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': '661624e34ff34fe58ec470dcd2607797', 'moderator': 'debate_moderator_eval'}"
+          "detail": "{'strategist': 'safety_maximizer', 'strategy': 'normal_burn', 'delta_v_mps': 14.0, 'target_miss_distance_km': 3.2, 'rationale': 'margins first: fourteen m/s normal for a wide berth. Held firm on margin (restatement 3).', 'cited_screening_values': {'pc': 0.0002319251, 'miss_distance_km': 0.0889, 'tca_iso': '2026-08-20T01:47:38.146053Z', 'recommended_dv_mps': 8.0}, 'action': 'we_dodge', 'our_dv_mps': 14.0, 'their_dv_mps': 0.0, 'converged': False, 'fallback_used': False, 'judge_used': True, 'trace_id': '6aa0a56b16c143fdbc7d95a0f7c5026c', 'moderator': 'debate_moderator_eval'}"
         },
         {
           "name": "judge_adjudicated_divergence",
@@ -356,7 +356,7 @@
       "name": "debate_safety_gate_intact",
       "description": "80 m/s proposal discarded pre-selection; downstream armour still rejects >ceiling",
       "passed": true,
-      "duration_ms": 2992.1,
+      "duration_ms": 3056.3,
       "error": null,
       "checks": [
         {
@@ -395,7 +395,7 @@
       "name": "debris_skips_negotiation",
       "description": "Debris counterparty \u2192 negotiation stage skipped, unilateral avoidance, gates intact",
       "passed": true,
-      "duration_ms": 10.0,
+      "duration_ms": 11.0,
       "error": null,
       "checks": [
         {
@@ -429,7 +429,7 @@
       "name": "evolution_conservative_loosen",
       "description": "12 over-reactions \u2192 evidence-backed pc_high raise applied, diff logged",
       "passed": true,
-      "duration_ms": 3.6,
+      "duration_ms": 3.8,
       "error": null,
       "checks": [
         {
@@ -497,7 +497,7 @@
       "name": "evolution_freeze",
       "description": "3 consecutive rejections \u2192 FROZEN_HUMAN_REVIEW; manual unfreeze restores operation",
       "passed": true,
-      "duration_ms": 12.6,
+      "duration_ms": 14.1,
       "error": null,
       "checks": [
         {
@@ -521,7 +521,7 @@
       "name": "evolution_gaming_rejected",
       "description": "Gaming temptation \u2192 CRITICAL G1/G3 flags + suspicion \u22650.7 \u2192 REJECTED, policy untouched",
       "passed": true,
-      "duration_ms": 2.9,
+      "duration_ms": 3.1,
       "error": null,
       "checks": [
         {
@@ -555,7 +555,7 @@
       "name": "fuel_guard",
       "description": "6% fuel + 8 m/s dodge (projects 2% < 5% reserve) \u2192 STRATEGIC_RESERVE_VIOLATION",
       "passed": true,
-      "duration_ms": 12.5,
+      "duration_ms": 12.0,
       "error": null,
       "checks": [
         {
@@ -584,7 +584,7 @@
       "name": "hallucination_guard",
       "description": "Negotiated dv 13.9 vs approved 8.0 \u2192 HALLUCINATED_DELTA_V, mission blocked",
       "passed": true,
-      "duration_ms": 10.2,
+      "duration_ms": 9.5,
       "error": null,
       "checks": [
         {
@@ -618,7 +618,7 @@
       "name": "high_risk_conjunction",
       "description": "Calibrated HIGH pair runs end-to-end: authorised, fuel debited, logged, armour all-PASS",
       "passed": true,
-      "duration_ms": 620.6,
+      "duration_ms": 613.1,
       "error": null,
       "checks": [
         {
@@ -649,7 +649,7 @@
         {
           "name": "conjunction_persisted",
           "passed": true,
-          "detail": "no doc for SIM_PROTECTED_ASSET-X-FENGYUN_1C_DEB-TCA-2026-08-29T02-11-32Z"
+          "detail": "no doc for SIM_PROTECTED_ASSET-X-FENGYUN_1C_DEB-TCA-2026-09-01T01-08-34Z"
         },
         {
           "name": "conjunction_final_status_recorded",
@@ -686,7 +686,7 @@
       "name": "low_risk_conjunction",
       "description": "LOW band (Pc 1e-9, miss 1500 km) logs only \u2014 no burn, no negotiation, no armour",
       "passed": true,
-      "duration_ms": 3.9,
+      "duration_ms": 3.4,
       "error": null,
       "checks": [
         {
@@ -715,7 +715,7 @@
       "name": "medium_risk_hitl",
       "description": "MEDIUM band held for human review \u2014 advisory logged, zero autonomous execution",
       "passed": true,
-      "duration_ms": 3.5,
+      "duration_ms": 3.7,
       "error": null,
       "checks": [
         {
@@ -754,7 +754,7 @@
       "name": "pii_sweep",
       "description": "Fake AWS key in negotiation reasoning \u2192 SENSITIVE_DATA_LEAK (AWS_ACCESS_KEY), content withheld",
       "passed": true,
-      "duration_ms": 10.0,
+      "duration_ms": 9.1,
       "error": null,
       "checks": [
         {
@@ -783,7 +783,7 @@
       "name": "policy_ceiling",
       "description": "80 m/s negotiated burn vs 50 m/s ceiling \u2192 POLICY_CEILING_EXCEEDED, mission blocked",
       "passed": true,
-      "duration_ms": 9.4,
+      "duration_ms": 9.9,
       "error": null,
       "checks": [
         {
@@ -812,7 +812,7 @@
       "name": "policy_changes_screening",
       "description": "Fixed Pc 7.51e-4: HIGH under default policy \u2192 MEDIUM under evolved pc_high=9e-4",
       "passed": true,
-      "duration_ms": 7.7,
+      "duration_ms": 6.8,
       "error": null,
       "checks": [
         {
@@ -845,5 +845,5 @@
     "checks_passed": 126,
     "all_passed": true
   },
-  "markdown_summary": "| Test | Result | Checks | Duration |\n|---|---|---|---|\n| circuit_breaker | PASS | 6/6 | 1524 ms |\n| constellation_optimization | PASS | 19/19 | 1 ms |\n| debate_all_settle | PASS | 8/8 | 13 ms |\n| debate_converges | PASS | 8/8 | 4 ms |\n| debate_fallback | PASS | 5/5 | 6 ms |\n| debate_hallucination_caught | PASS | 5/5 | 5 ms |\n| debate_loop_caught | PASS | 6/6 | 9 ms |\n| debate_safety_gate_intact | PASS | 6/6 | 2992 ms |\n| debris_skips_negotiation | PASS | 5/5 | 10 ms |\n| evolution_conservative_loosen | PASS | 6/6 | 4 ms |\n| evolution_envelope_clamp | PASS | 4/4 | 4 ms |\n| evolution_freeze | PASS | 3/3 | 13 ms |\n| evolution_gaming_rejected | PASS | 5/5 | 3 ms |\n| fuel_guard | PASS | 4/4 | 12 ms |\n| hallucination_guard | PASS | 5/5 | 10 ms |\n| high_risk_conjunction | PASS | 9/9 | 621 ms |\n| low_risk_conjunction | PASS | 4/4 | 4 ms |\n| medium_risk_hitl | PASS | 6/6 | 4 ms |\n| pii_sweep | PASS | 4/4 | 10 ms |\n| policy_ceiling | PASS | 4/4 | 9 ms |\n| policy_changes_screening | PASS | 4/4 | 8 ms |\n\n**Verdict: ALL GREEN** (126/126 checks)"
+  "markdown_summary": "| Test | Result | Checks | Duration |\n|---|---|---|---|\n| circuit_breaker | PASS | 6/6 | 1666 ms |\n| constellation_optimization | PASS | 19/19 | 1 ms |\n| debate_all_settle | PASS | 8/8 | 14 ms |\n| debate_converges | PASS | 8/8 | 6 ms |\n| debate_fallback | PASS | 5/5 | 7 ms |\n| debate_hallucination_caught | PASS | 5/5 | 5 ms |\n| debate_loop_caught | PASS | 6/6 | 9 ms |\n| debate_safety_gate_intact | PASS | 6/6 | 3056 ms |\n| debris_skips_negotiation | PASS | 5/5 | 11 ms |\n| evolution_conservative_loosen | PASS | 6/6 | 4 ms |\n| evolution_envelope_clamp | PASS | 4/4 | 4 ms |\n| evolution_freeze | PASS | 3/3 | 14 ms |\n| evolution_gaming_rejected | PASS | 5/5 | 3 ms |\n| fuel_guard | PASS | 4/4 | 12 ms |\n| hallucination_guard | PASS | 5/5 | 10 ms |\n| high_risk_conjunction | PASS | 9/9 | 613 ms |\n| low_risk_conjunction | PASS | 4/4 | 3 ms |\n| medium_risk_hitl | PASS | 6/6 | 4 ms |\n| pii_sweep | PASS | 4/4 | 9 ms |\n| policy_ceiling | PASS | 4/4 | 10 ms |\n| policy_changes_screening | PASS | 4/4 | 7 ms |\n\n**Verdict: ALL GREEN** (126/126 checks)"
 }

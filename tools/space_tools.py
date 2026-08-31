@@ -1018,6 +1018,8 @@ def catalog_identity(object_id: str) -> dict[str, Any]:
     entry = _CATALOG.get(key)
     if entry is None:
         live = _LAST_LIVE_OBJECTS.get(key)
+        if live is None and _known_object(key):
+            live = _LAST_LIVE_OBJECTS.get(key)
         if live is not None:
             payload_like = str(live.get("object_type", "")).upper() == "PAYLOAD"
             return {
